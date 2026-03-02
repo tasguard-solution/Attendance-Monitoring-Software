@@ -1,0 +1,5 @@
+/node_modules
+node_modules/*
+src/app/components/AdminLogin.tsx
+supabase/functions/make-server-f3cc8027/index.ts
+utils/supabase/info.tsx
