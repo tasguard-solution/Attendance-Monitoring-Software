@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo, useCallback } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
@@ -20,64 +20,7 @@ import QRCode from "qrcode";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
 import { format } from "date-fns";
 import { supabase } from "../lib/supabase";
-import { MapContainer, TileLayer, Marker, useMap } from "react-leaflet";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
-
-// Fix default marker icon for Leaflet + bundlers
-const defaultIcon = new L.Icon({
-  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-});
-
-// Draggable marker that calls onMove after drag ends
-function DraggableMarker({ position, onMove }: { position: [number, number]; onMove: (lat: number, lng: number) => void }) {
-  const markerRef = useRef<L.Marker>(null);
-  const onMoveRef = useRef(onMove);
-  onMoveRef.current = onMove;
-
-  const eventHandlers = useMemo(
-    () => ({
-      dragend() {
-        const marker = markerRef.current;
-        if (marker) {
-          const { lat, lng } = marker.getLatLng();
-          onMoveRef.current(lat, lng);
-        }
-      },
-    }),
-    []
-  );
-
-  return <Marker draggable position={position} ref={markerRef} eventHandlers={eventHandlers} icon={defaultIcon} />;
-}
-
-// Component to handle click-to-place and re-centering
-function MapInteraction({ onMove, center }: { onMove: (lat: number, lng: number) => void; center: [number, number] }) {
-  const map = useMap();
-  const onMoveRef = useRef(onMove);
-  onMoveRef.current = onMove;
-  const initialCenter = useRef(center);
-
-  // Fly to center once on mount
-  useEffect(() => {
-    map.setView(initialCenter.current, 15);
-  }, [map]);
-
-  // Attach click handler
-  useEffect(() => {
-    const handler = (e: L.LeafletMouseEvent) => {
-      onMoveRef.current(e.latlng.lat, e.latlng.lng);
-    };
-    map.on("click", handler);
-    return () => { map.off("click", handler); };
-  }, [map]);
-
-  return null;
-}
+import { MapPicker } from "./MapPicker";
 
 interface AttendanceRecord {
   employeeId: string;
@@ -697,16 +640,11 @@ export function OrgDashboard() {
                 Pin Location (drag or click)
               </label>
               {geoReady && showCreateBranchDialog && (
-                <div className="rounded-lg overflow-hidden border border-gray-200" style={{ height: 250 }}>
-                  <MapContainer center={[newBranchLat, newBranchLng]} zoom={15} style={{ height: "100%", width: "100%" }}>
-                    <TileLayer
-                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    />
-                    <DraggableMarker position={[newBranchLat, newBranchLng]} onMove={(lat, lng) => { setNewBranchLat(lat); setNewBranchLng(lng); }} />
-                    <MapInteraction center={[newBranchLat, newBranchLng]} onMove={(lat, lng) => { setNewBranchLat(lat); setNewBranchLng(lng); }} />
-                  </MapContainer>
-                </div>
+                <MapPicker
+                  lat={newBranchLat}
+                  lng={newBranchLng}
+                  onMove={(lat, lng) => { setNewBranchLat(lat); setNewBranchLng(lng); }}
+                />
               )}
               <p className="text-xs text-gray-400">Lat: {newBranchLat.toFixed(5)}, Lng: {newBranchLng.toFixed(5)}</p>
             </div>
@@ -760,16 +698,11 @@ export function OrgDashboard() {
                 Pin Location (drag or click)
               </label>
               {showEditBranchDialog && (
-                <div className="rounded-lg overflow-hidden border border-gray-200" style={{ height: 250 }}>
-                  <MapContainer center={[editBranchLat, editBranchLng]} zoom={15} style={{ height: "100%", width: "100%" }}>
-                    <TileLayer
-                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    />
-                    <DraggableMarker position={[editBranchLat, editBranchLng]} onMove={(lat, lng) => { setEditBranchLat(lat); setEditBranchLng(lng); }} />
-                    <MapInteraction center={[editBranchLat, editBranchLng]} onMove={(lat, lng) => { setEditBranchLat(lat); setEditBranchLng(lng); }} />
-                  </MapContainer>
-                </div>
+                <MapPicker
+                  lat={editBranchLat}
+                  lng={editBranchLng}
+                  onMove={(lat, lng) => { setEditBranchLat(lat); setEditBranchLng(lng); }}
+                />
               )}
               <p className="text-xs text-gray-400">Lat: {editBranchLat.toFixed(5)}, Lng: {editBranchLng.toFixed(5)}</p>
             </div>
