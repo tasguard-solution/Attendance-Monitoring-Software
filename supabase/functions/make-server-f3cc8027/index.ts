@@ -21,6 +21,19 @@ app.use(
   }),
 );
 
+// Haversine distance calculation (returns meters)
+function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371000; // Earth radius in meters
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
 // Helper: get authenticated user from request
 async function getAuthUser(c: any) {
   const authHeader = c.req.header('X-Authorization') || c.req.header('Authorization');
@@ -269,7 +282,7 @@ app.post("/make-server-f3cc8027/org/branches", async (c) => {
       return c.json({ error: 'Organization not found' }, 404);
     }
 
-    const { name, address } = await c.req.json();
+    const { name, address, latitude, longitude } = await c.req.json();
     if (!name) {
       return c.json({ error: "Branch name is required" }, 400);
     }
@@ -283,6 +296,8 @@ app.post("/make-server-f3cc8027/org/branches", async (c) => {
       organizationId: user.id,
       qrCode: branchQr,
       address: address || "",
+      latitude: latitude ?? null,
+      longitude: longitude ?? null,
       createdAt: new Date().toISOString(),
     };
 
@@ -335,9 +350,11 @@ app.put("/make-server-f3cc8027/org/branches/:id", async (c) => {
       return c.json({ error: 'Branch not found' }, 404);
     }
 
-    const { name, address } = await c.req.json();
+    const { name, address, latitude, longitude } = await c.req.json();
     if (name) branchData.name = name;
     if (address !== undefined) branchData.address = address;
+    if (latitude !== undefined) branchData.latitude = latitude;
+    if (longitude !== undefined) branchData.longitude = longitude;
 
     await kv.set(`branch:${branchId}`, branchData);
 
@@ -444,11 +461,26 @@ app.post("/make-server-f3cc8027/attendance/clockin", async (c) => {
       return c.json({ error: 'Employee does not belong to this organization' }, 403);
     }
 
-    // Get branch name if available
+    // Get branch name and check proximity
     let branchName = "";
     if (branchId) {
       const branchData = await kv.get(`branch:${branchId}`);
-      if (branchData) branchName = branchData.name;
+      if (branchData) {
+        branchName = branchData.name;
+
+        // Proximity check: enforce 50m radius if branch has coordinates
+        if (branchData.latitude != null && branchData.longitude != null) {
+          const distance = haversineDistance(
+            branchData.latitude, branchData.longitude,
+            latitude, longitude
+          );
+          if (distance > 50) {
+            return c.json({
+              error: `You are too far from ${branchName} (${Math.round(distance)}m away, max 50m)`
+            }, 403);
+          }
+        }
+      }
     }
 
     // Create attendance record

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { useNavigate } from "react-router";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
@@ -13,12 +13,53 @@ import {
   Plus,
   MapPin,
   Building2,
+  Pencil,
 } from "lucide-react";
 import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import QRCode from "qrcode";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
 import { format } from "date-fns";
 import { supabase } from "../lib/supabase";
+import { MapContainer, TileLayer, Marker, useMapEvents } from "react-leaflet";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+
+// Fix default marker icon for Leaflet + bundlers
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+});
+
+// Draggable marker component for the map picker
+function DraggableMarker({ position, onMove }: { position: [number, number]; onMove: (lat: number, lng: number) => void }) {
+  const markerRef = useRef<L.Marker>(null);
+  const eventHandlers = useMemo(
+    () => ({
+      dragend() {
+        const marker = markerRef.current;
+        if (marker) {
+          const { lat, lng } = marker.getLatLng();
+          onMove(lat, lng);
+        }
+      },
+    }),
+    [onMove]
+  );
+
+  return <Marker draggable position={position} ref={markerRef} eventHandlers={eventHandlers} />;
+}
+
+// Click-to-move component
+function MapClickHandler({ onMove }: { onMove: (lat: number, lng: number) => void }) {
+  useMapEvents({
+    click(e) {
+      onMove(e.latlng.lat, e.latlng.lng);
+    },
+  });
+  return null;
+}
 
 interface AttendanceRecord {
   employeeId: string;
@@ -35,6 +76,8 @@ interface Branch {
   name: string;
   qrCode: string;
   address: string;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 export function OrgDashboard() {
@@ -49,8 +92,49 @@ export function OrgDashboard() {
   const [showCreateBranchDialog, setShowCreateBranchDialog] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
   const [newBranchAddress, setNewBranchAddress] = useState("");
+  const [newBranchLat, setNewBranchLat] = useState<number>(0);
+  const [newBranchLng, setNewBranchLng] = useState<number>(0);
   const [isCreatingBranch, setIsCreatingBranch] = useState(false);
   const [orgId, setOrgId] = useState("");
+
+  // Edit branch state
+  const [showEditBranchDialog, setShowEditBranchDialog] = useState(false);
+  const [editBranch, setEditBranch] = useState<Branch | null>(null);
+  const [editBranchName, setEditBranchName] = useState("");
+  const [editBranchAddress, setEditBranchAddress] = useState("");
+  const [editBranchLat, setEditBranchLat] = useState<number>(0);
+  const [editBranchLng, setEditBranchLng] = useState<number>(0);
+  const [isSavingBranch, setIsSavingBranch] = useState(false);
+
+  // Map default position state
+  const [defaultLatLng, setDefaultLatLng] = useState<[number, number]>([0, 0]);
+  const [geoReady, setGeoReady] = useState(false);
+
+  // Get user's current location on mount
+  useEffect(() => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setDefaultLatLng([pos.coords.latitude, pos.coords.longitude]);
+          setNewBranchLat(pos.coords.latitude);
+          setNewBranchLng(pos.coords.longitude);
+          setGeoReady(true);
+        },
+        () => {
+          // Fallback: Lagos, Nigeria
+          setDefaultLatLng([6.5244, 3.3792]);
+          setNewBranchLat(6.5244);
+          setNewBranchLng(3.3792);
+          setGeoReady(true);
+        }
+      );
+    } else {
+      setDefaultLatLng([6.5244, 3.3792]);
+      setNewBranchLat(6.5244);
+      setNewBranchLng(3.3792);
+      setGeoReady(true);
+    }
+  }, []);
 
   useEffect(() => {
     const token = localStorage.getItem("accessToken");
@@ -121,6 +205,8 @@ export function OrgDashboard() {
           body: JSON.stringify({
             name: newBranchName,
             address: newBranchAddress,
+            latitude: newBranchLat,
+            longitude: newBranchLng,
           }),
         }
       );
@@ -132,6 +218,8 @@ export function OrgDashboard() {
         setShowCreateBranchDialog(false);
         setNewBranchName("");
         setNewBranchAddress("");
+        setNewBranchLat(defaultLatLng[0]);
+        setNewBranchLng(defaultLatLng[1]);
       } else {
         toast.error(data.error || "Failed to create branch");
       }
@@ -140,6 +228,54 @@ export function OrgDashboard() {
       toast.error("Failed to create branch");
     } finally {
       setIsCreatingBranch(false);
+    }
+  };
+
+  const openEditBranch = (branch: Branch) => {
+    setEditBranch(branch);
+    setEditBranchName(branch.name);
+    setEditBranchAddress(branch.address || "");
+    setEditBranchLat(branch.latitude ?? defaultLatLng[0]);
+    setEditBranchLng(branch.longitude ?? defaultLatLng[1]);
+    setShowEditBranchDialog(true);
+  };
+
+  const saveBranch = async () => {
+    if (!editBranch || !editBranchName) return;
+    setIsSavingBranch(true);
+    const token = localStorage.getItem("accessToken");
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-f3cc8027/org/branches/${editBranch.id}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${publicAnonKey}`,
+            "X-Authorization": `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            name: editBranchName,
+            address: editBranchAddress,
+            latitude: editBranchLat,
+            longitude: editBranchLng,
+          }),
+        }
+      );
+
+      const data = await response.json();
+      if (response.ok) {
+        toast.success("Branch updated successfully");
+        setBranches(branches.map((b) => (b.id === editBranch.id ? data.branch : b)));
+        setShowEditBranchDialog(false);
+      } else {
+        toast.error(data.error || "Failed to update branch");
+      }
+    } catch (error) {
+      console.error("Error updating branch:", error);
+      toast.error("Failed to update branch");
+    } finally {
+      setIsSavingBranch(false);
     }
   };
 
@@ -363,9 +499,18 @@ export function OrgDashboard() {
                   variant="outline"
                   size="sm"
                   onClick={() => showBranchQr(branch)}
-                  className="w-full"
+                  className="flex-1"
                 >
-                  View QR Code
+                  View QR
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openEditBranch(branch)}
+                  className="flex-1"
+                >
+                  <Pencil className="w-3 h-3 mr-1" />
+                  Edit
                 </Button>
                 <Button
                   variant="ghost"
@@ -500,11 +645,11 @@ export function OrgDashboard() {
 
       {/* Create Branch Dialog */}
       <Dialog open={showCreateBranchDialog} onOpenChange={setShowCreateBranchDialog}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Add New Branch</DialogTitle>
             <DialogDescription>
-              Create a distinct branch with its own trackable QR code.
+              Create a distinct branch with its own trackable QR code. Drag the pin or click the map to set the branch location.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -519,7 +664,7 @@ export function OrgDashboard() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Location / Address</label>
+              <label className="text-sm font-medium">Address</label>
               <input
                 type="text"
                 className="w-full p-2 border rounded-md focus:ring-2 focus:ring-indigo-500 outline-none"
@@ -527,6 +672,25 @@ export function OrgDashboard() {
                 value={newBranchAddress}
                 onChange={(e) => setNewBranchAddress(e.target.value)}
               />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-1">
+                <MapPin className="w-3.5 h-3.5 text-indigo-600" />
+                Pin Location (drag or click)
+              </label>
+              {geoReady && (
+                <div className="rounded-lg overflow-hidden border border-gray-200" style={{ height: 250 }}>
+                  <MapContainer center={[newBranchLat, newBranchLng]} zoom={15} style={{ height: "100%", width: "100%" }} key={`create-${newBranchLat}-${newBranchLng}`}>
+                    <TileLayer
+                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    />
+                    <DraggableMarker position={[newBranchLat, newBranchLng]} onMove={(lat, lng) => { setNewBranchLat(lat); setNewBranchLng(lng); }} />
+                    <MapClickHandler onMove={(lat, lng) => { setNewBranchLat(lat); setNewBranchLng(lng); }} />
+                  </MapContainer>
+                </div>
+              )}
+              <p className="text-xs text-gray-400">Lat: {newBranchLat.toFixed(5)}, Lng: {newBranchLng.toFixed(5)}</p>
             </div>
           </div>
           <div className="flex justify-end gap-3 mt-4">
@@ -539,6 +703,69 @@ export function OrgDashboard() {
               disabled={!newBranchName || isCreatingBranch}
             >
               {isCreatingBranch ? "Creating..." : "Create Branch"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Branch Dialog */}
+      <Dialog open={showEditBranchDialog} onOpenChange={setShowEditBranchDialog}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Branch</DialogTitle>
+            <DialogDescription>
+              Update the branch name, address, or reposition the location pin.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Branch Name</label>
+              <input
+                type="text"
+                className="w-full p-2 border rounded-md focus:ring-2 focus:ring-indigo-500 outline-none"
+                value={editBranchName}
+                onChange={(e) => setEditBranchName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Address</label>
+              <input
+                type="text"
+                className="w-full p-2 border rounded-md focus:ring-2 focus:ring-indigo-500 outline-none"
+                value={editBranchAddress}
+                onChange={(e) => setEditBranchAddress(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-1">
+                <MapPin className="w-3.5 h-3.5 text-indigo-600" />
+                Pin Location (drag or click)
+              </label>
+              {showEditBranchDialog && (
+                <div className="rounded-lg overflow-hidden border border-gray-200" style={{ height: 250 }}>
+                  <MapContainer center={[editBranchLat, editBranchLng]} zoom={15} style={{ height: "100%", width: "100%" }} key={`edit-${editBranch?.id}-${editBranchLat}-${editBranchLng}`}>
+                    <TileLayer
+                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    />
+                    <DraggableMarker position={[editBranchLat, editBranchLng]} onMove={(lat, lng) => { setEditBranchLat(lat); setEditBranchLng(lng); }} />
+                    <MapClickHandler onMove={(lat, lng) => { setEditBranchLat(lat); setEditBranchLng(lng); }} />
+                  </MapContainer>
+                </div>
+              )}
+              <p className="text-xs text-gray-400">Lat: {editBranchLat.toFixed(5)}, Lng: {editBranchLng.toFixed(5)}</p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 mt-4">
+            <Button variant="outline" onClick={() => setShowEditBranchDialog(false)} disabled={isSavingBranch}>
+              Cancel
+            </Button>
+            <Button
+              onClick={saveBranch}
+              className="bg-indigo-600 hover:bg-indigo-700"
+              disabled={!editBranchName || isSavingBranch}
+            >
+              {isSavingBranch ? "Saving..." : "Save Changes"}
             </Button>
           </div>
         </DialogContent>
