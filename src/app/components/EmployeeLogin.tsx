@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, Link } from "react-router";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -181,7 +181,16 @@ export function EmployeeLogin() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="password">Password</Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="password" className="text-gray-700">Password</Label>
+              <Link
+                to="/forgot-password"
+                className="text-sm font-medium text-green-600 hover:text-green-500"
+                tabIndex={-1}
+              >
+                Forgot password?
+              </Link>
+            </div>
             <Input
               id="password"
               type="password"

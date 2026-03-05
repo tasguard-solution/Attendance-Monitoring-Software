@@ -6,6 +6,8 @@ import { EmployeeScanner } from "./components/EmployeeScanner";
 import { LandingPage } from "./components/LandingPage";
 import { AdminLogin } from "./components/AdminLogin";
 import { AdminDashboard } from "./components/AdminDashboard";
+import { ForgotPassword } from "./components/ForgotPassword";
+import { UpdatePassword } from "./components/UpdatePassword";
 
 export const router = createBrowserRouter([
   {
@@ -35,5 +37,13 @@ export const router = createBrowserRouter([
   {
     path: "/admin/dashboard",
     Component: AdminDashboard,
+  },
+  {
+    path: "/forgot-password",
+    Component: ForgotPassword,
+  },
+  {
+    path: "/update-password",
+    Component: UpdatePassword,
   },
 ]);
