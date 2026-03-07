@@ -165,6 +165,57 @@ app.post("/make-server-f3cc8027/admin/wipe", async (c) => {
   }
 });
 
+// Delete a specific organization and all its data
+app.delete("/make-server-f3cc8027/admin/organizations/:id", async (c) => {
+  try {
+    if (!await verifyAdmin(c)) return c.json({ error: "Unauthorized" }, 401);
+    
+    const orgId = c.req.param('id');
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    // 1. Get all employees of this org to delete from Auth
+    const allEmployees = await kv.getByPrefix('employee:');
+    const orgEmployees = allEmployees.filter((emp: any) => emp.organizationId === orgId);
+
+    for (const emp of orgEmployees) {
+      if (emp.id) {
+        await supabase.auth.admin.deleteUser(emp.id);
+        await kv.del(`employee:empId:${emp.employeeId}`);
+        await kv.del(`employee:${emp.id}`);
+      }
+    }
+
+    // 2. Delete all branches and their QR mappings
+    const allBranches = await kv.getByPrefix('branch:');
+    const orgBranches = allBranches.filter((b: any) => b.organizationId === orgId);
+    for (const b of orgBranches) {
+      await kv.del(`branch:${b.id}`);
+      await kv.del(`qr:${b.qrCode}`);
+    }
+
+    // 3. Delete all attendance records
+    const allRecords = await kv.getByPrefix('attendance:');
+    const orgRecords = allRecords.filter((r: any) => r.organizationId === orgId);
+    for (const r of orgRecords) {
+      // Record key format is attendance:userId:timestamp
+      await kv.del(`attendance:${r.employeeId}:${r.timestamp}`);
+    }
+
+    // 4. Delete the organization user and its KV entry
+    await kv.del(`org:${orgId}`);
+    await supabase.auth.admin.deleteUser(orgId);
+
+    return c.json({ success: true });
+  } catch (err) {
+    console.log(`Admin delete org error: ${err}`);
+    return c.json({ error: "Failed to delete organization" }, 500);
+  }
+});
+
+
 // ============================================================
 // ORGANIZATION SIGNUP
 // ============================================================
@@ -603,5 +654,79 @@ app.get("/make-server-f3cc8027/org/employees", async (c) => {
     return c.json({ error: "Failed to get employees" }, 500);
   }
 });
+
+// ============================================================
+// UPDATE EMPLOYEE
+// ============================================================
+app.put("/make-server-f3cc8027/org/employees/:id", async (c) => {
+  try {
+    const { user, error, supabase } = await getAuthUser(c);
+    if (!user?.id || error) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const targetId = c.req.param('id');
+    const empData = await kv.get(`employee:${targetId}`);
+
+    if (!empData || empData.organizationId !== user.id) {
+      return c.json({ error: 'Employee not found' }, 404);
+    }
+
+    const { name, email } = await c.req.json();
+
+    if (name) empData.name = name;
+    if (email) empData.email = email;
+
+    // Update KV
+    await kv.set(`employee:${targetId}`, empData);
+
+    // Update Auth Metadata if name changed
+    if (name) {
+      await supabase.auth.admin.updateUserById(targetId, {
+        user_metadata: { ...user.user_metadata, name }
+      });
+    }
+
+    return c.json({ success: true, employee: empData });
+  } catch (err) {
+    console.log(`Update employee error: ${err}`);
+    return c.json({ error: "Failed to update employee" }, 500);
+  }
+});
+
+// ============================================================
+// DELETE EMPLOYEE
+// ============================================================
+app.delete("/make-server-f3cc8027/org/employees/:id", async (c) => {
+  try {
+    const { user, error, supabase } = await getAuthUser(c);
+    if (!user?.id || error) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const targetId = c.req.param('id');
+    const empData = await kv.get(`employee:${targetId}`);
+
+    if (!empData || empData.organizationId !== user.id) {
+      return c.json({ error: 'Employee not found' }, 404);
+    }
+
+    // Delete from KV
+    await kv.del(`employee:${targetId}`);
+    await kv.del(`employee:empId:${empData.employeeId}`);
+
+    // Delete from Auth
+    const { error: delError } = await supabase.auth.admin.deleteUser(targetId);
+    if (delError) {
+      console.log(`Auth delete error for ${targetId}: ${delError.message}`);
+    }
+
+    return c.json({ success: true });
+  } catch (err) {
+    console.log(`Delete employee error: ${err}`);
+    return c.json({ error: "Failed to delete employee" }, 500);
+  }
+});
+
 
 Deno.serve(app.fetch);

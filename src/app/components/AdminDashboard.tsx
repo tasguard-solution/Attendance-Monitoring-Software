@@ -114,6 +114,33 @@ export function AdminDashboard() {
         }
     };
 
+    const handleDeleteOrganization = async (id: string, name: string) => {
+        if (!confirm(`CRITICAL: You are about to permanently DELETE "${name}" and all its associated data (Employees, Branches, Records). This cannot be undone. Proceed?`)) {
+            return;
+        }
+
+        const adminToken = localStorage.getItem("adminToken");
+        try {
+            const response = await fetch(
+                `https://${projectId}.supabase.co/functions/v1/make-server-f3cc8027/admin/organizations/${id}`,
+                {
+                    method: "DELETE",
+                    headers: {
+                        "Authorization": `Bearer ${publicAnonKey}`,
+                        "X-Authorization": `Bearer ${adminToken}`,
+                    },
+                }
+            );
+
+            if (!response.ok) throw new Error("Deletion failed");
+
+            toast.success(`${name} has been expunged`);
+            fetchData();
+        } catch (error: any) {
+            toast.error(error.message);
+        }
+    };
+
     const handleLogout = () => {
         localStorage.removeItem("adminToken");
         localStorage.removeItem("userType");
@@ -249,9 +276,23 @@ export function AdminDashboard() {
                                                         {new Date(org.createdAt).toLocaleDateString()}
                                                     </td>
                                                     <td className="py-4 px-6 text-right">
-                                                        <Button variant="ghost" size="sm" className="text-blue-400 hover:text-blue-300 hover:bg-blue-400/10">
-                                                            Inspect
-                                                        </Button>
+                                                        <div className="flex justify-end gap-2">
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                className="text-blue-400 hover:text-blue-300 hover:bg-blue-400/10"
+                                                            >
+                                                                Inspect
+                                                            </Button>
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                onClick={() => handleDeleteOrganization(org.id, org.name)}
+                                                                className="text-red-400 hover:text-red-300 hover:bg-red-400/10"
+                                                            >
+                                                                <Trash2 className="w-4 h-4" />
+                                                            </Button>
+                                                        </div>
                                                     </td>
                                                 </tr>
                                             ))

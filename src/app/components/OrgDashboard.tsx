@@ -14,6 +14,7 @@ import {
   MapPin,
   Building2,
   Pencil,
+  Trash2,
 } from "lucide-react";
 import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import QRCode from "qrcode";
@@ -66,6 +67,15 @@ export function OrgDashboard() {
   const [editBranchLat, setEditBranchLat] = useState<number>(0);
   const [editBranchLng, setEditBranchLng] = useState<number>(0);
   const [isSavingBranch, setIsSavingBranch] = useState(false);
+  const [isDeletingBranch, setIsDeletingBranch] = useState(false);
+
+  // Staff management state
+  const [showEditEmployeeDialog, setShowEditEmployeeDialog] = useState(false);
+  const [editEmployee, setEditEmployee] = useState<any | null>(null);
+  const [editEmployeeName, setEditEmployeeName] = useState("");
+  const [editEmployeeEmail, setEditEmployeeEmail] = useState("");
+  const [isSavingEmployee, setIsSavingEmployee] = useState(false);
+  const [isDeletingEmployee, setIsDeletingEmployee] = useState(false);
 
   // Map default position state
   const [defaultLatLng, setDefaultLatLng] = useState<[number, number]>([0, 0]);
@@ -282,6 +292,82 @@ export function OrgDashboard() {
       if (error && error.message) {
         console.error("Fetch employees error:", error.message);
       }
+    }
+  };
+
+  const openEditEmployee = (emp: any) => {
+    setEditEmployee(emp);
+    setEditEmployeeName(emp.name);
+    setEditEmployeeEmail(emp.email);
+    setShowEditEmployeeDialog(true);
+  };
+
+  const saveEmployee = async () => {
+    if (!editEmployee || !editEmployeeName) return;
+    setIsSavingEmployee(true);
+    const token = localStorage.getItem("accessToken");
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-f3cc8027/org/employees/${editEmployee.id}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${publicAnonKey}`,
+            "X-Authorization": `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            name: editEmployeeName,
+            email: editEmployeeEmail,
+          }),
+        }
+      );
+
+      const data = await response.json();
+      if (response.ok) {
+        toast.success("Employee updated successfully");
+        setEmployees(employees.map((e) => (e.id === editEmployee.id ? { ...e, name: editEmployeeName, email: editEmployeeEmail } : e)));
+        setShowEditEmployeeDialog(false);
+      } else {
+        toast.error(data.error || "Failed to update employee");
+      }
+    } catch (error) {
+      console.error("Error updating employee:", error);
+      toast.error("Failed to update employee");
+    } finally {
+      setIsSavingEmployee(false);
+    }
+  };
+
+  const deleteEmployee = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this employee? This will also disconnect their account from your organization.")) return;
+    setIsDeletingEmployee(true);
+    const token = localStorage.getItem("accessToken");
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-f3cc8027/org/employees/${id}`,
+        {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${publicAnonKey}`,
+            "X-Authorization": `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (response.ok) {
+        toast.success("Employee deleted successfully");
+        setEmployees(employees.filter((e) => e.id !== id));
+      } else {
+        const data = await response.json();
+        toast.error(data.error || "Failed to delete employee");
+      }
+    } catch (error) {
+      console.error("Error deleting employee:", error);
+      toast.error("Failed to delete employee");
+    } finally {
+      setIsDeletingEmployee(false);
     }
   };
 
@@ -512,6 +598,62 @@ export function OrgDashboard() {
           </div>
         </Card>
 
+        {/* Staff Management Section */}
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold flex items-center gap-2">
+            <Users className="w-5 h-5" />
+            Staff Management
+          </h2>
+        </div>
+
+        <Card className="p-6 mb-8 bg-white">
+          {employees.length === 0 ? (
+            <p className="text-center py-8 text-gray-500">No employees registered yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b text-gray-600">
+                    <th className="text-left py-3 px-4 font-semibold">Name</th>
+                    <th className="text-left py-3 px-4 font-semibold">Employee ID</th>
+                    <th className="text-left py-3 px-4 font-semibold">Email</th>
+                    <th className="text-right py-3 px-4 font-semibold">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {employees.map((emp) => (
+                    <tr key={emp.id} className="border-b hover:bg-gray-50 group">
+                      <td className="py-3 px-4 font-medium text-gray-900">{emp.name}</td>
+                      <td className="py-3 px-4 text-gray-600 font-mono text-sm">{emp.employeeId}</td>
+                      <td className="py-3 px-4 text-gray-600">{emp.email}</td>
+                      <td className="py-3 px-4 text-right">
+                        <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openEditEmployee(emp)}
+                            className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => deleteEmployee(emp.id)}
+                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+
         {/* Attendance Records Table */}
         <Card className="p-6 bg-white">
           <div className="flex items-center justify-between mb-4">
@@ -717,6 +859,50 @@ export function OrgDashboard() {
               disabled={!editBranchName || isSavingBranch}
             >
               {isSavingBranch ? "Saving..." : "Save Changes"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Employee Dialog */}
+      <Dialog open={showEditEmployeeDialog} onOpenChange={setShowEditEmployeeDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Employee Information</DialogTitle>
+            <DialogDescription>
+              Update the profile details for {editEmployee?.name}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Full Name</label>
+              <input
+                type="text"
+                className="w-full p-2 border rounded-md focus:ring-2 focus:ring-indigo-500 outline-none"
+                value={editEmployeeName}
+                onChange={(e) => setEditEmployeeName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Email Address</label>
+              <input
+                type="email"
+                className="w-full p-2 border rounded-md focus:ring-2 focus:ring-indigo-500 outline-none"
+                value={editEmployeeEmail}
+                onChange={(e) => setEditEmployeeEmail(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 mt-4">
+            <Button variant="outline" onClick={() => setShowEditEmployeeDialog(false)} disabled={isSavingEmployee}>
+              Cancel
+            </Button>
+            <Button
+              onClick={saveEmployee}
+              className="bg-indigo-600 hover:bg-indigo-700"
+              disabled={!editEmployeeName || isSavingEmployee}
+            >
+              {isSavingEmployee ? "Saving..." : "Update Profile"}
             </Button>
           </div>
         </DialogContent>
