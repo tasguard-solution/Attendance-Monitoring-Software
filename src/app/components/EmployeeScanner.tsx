@@ -215,16 +215,22 @@ export function EmployeeScanner() {
   };
 
   const onScanSuccess = async (decodedText: string) => {
-    if (processingScan || qrLockedRef.current || scanPhase !== "QR") return;
-    qrLockedRef.current = true;
+    // If we already have a payload or aren't in QR phase, ignore
+    if (scanPhase !== "QR" || qrPayload === decodedText) return;
 
-    // Stop the QR scanner as soon as we got the code
-    setProcessingScan("QR Decoded! Switching camera...");
     setQrPayload(decodedText);
-    await stopScanning();
+    setProcessingScan("QR Code Detected! Tap 'Proceed to Face Scan' below.");
+  };
+
+  const proceedToFaceScan = async () => {
+    if (!qrPayload || qrLockedRef.current) return;
+    qrLockedRef.current = true; // Prevent double clicks on the button
+
+    setProcessingScan("Switching camera...");
+    await stopScanning(); // Now safe, we are outside the html5-qrcode hook loop!
 
     // Give browser time to release hardware
-    await new Promise(r => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 400));
 
     // Switch to face scan phase
     await startFrontCamera();
@@ -440,11 +446,22 @@ export function EmployeeScanner() {
 
               <div className="relative">
                 {scanPhase === "QR" && (
-                  <div
-                    id="qr-reader"
-                    ref={scannerRef}
-                    className="rounded-lg overflow-hidden"
-                  ></div>
+                  <div className="flex flex-col items-center">
+                    <div
+                      id="qr-reader"
+                      ref={scannerRef}
+                      className="rounded-lg overflow-hidden w-full"
+                    ></div>
+                    {qrPayload && (
+                      <Button
+                        onClick={proceedToFaceScan}
+                        className="mt-4 w-full bg-green-600 hover:bg-green-700 h-14 text-lg animate-in slide-in-from-bottom-2 shadow-lg"
+                      >
+                        <CheckCircle className="w-6 h-6 mr-2" />
+                        Proceed to Face Scan
+                      </Button>
+                    )}
+                  </div>
                 )}
 
                 {scanPhase === "FACE" && (
