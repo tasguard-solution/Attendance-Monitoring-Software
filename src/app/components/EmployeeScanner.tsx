@@ -452,15 +452,14 @@ export function EmployeeScanner() {
                       ref={scannerRef}
                       className="rounded-lg overflow-hidden w-full"
                     ></div>
-                    {qrPayload && (
-                      <Button
-                        onClick={proceedToFaceScan}
-                        className="mt-4 w-full bg-green-600 hover:bg-green-700 h-14 text-lg animate-in slide-in-from-bottom-2 shadow-lg"
-                      >
-                        <CheckCircle className="w-6 h-6 mr-2" />
-                        Proceed to Face Scan
-                      </Button>
-                    )}
+                    <Button
+                      onClick={proceedToFaceScan}
+                      disabled={!qrPayload}
+                      className="mt-4 w-full bg-green-600 hover:bg-green-700 h-14 text-lg shadow-sm"
+                    >
+                      <CheckCircle className="w-6 h-6 mr-2" />
+                      {qrPayload ? "Proceed to Face Scan" : "Waiting for QR Code..."}
+                    </Button>
                   </div>
                 )}
 
