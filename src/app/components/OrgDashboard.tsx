@@ -30,6 +30,7 @@ interface AttendanceRecord {
   timestamp: string;
   latitude: number;
   longitude: number;
+  branchId?: string;
   branchName?: string;
 }
 
@@ -77,6 +78,9 @@ export function OrgDashboard() {
   const [isSavingEmployee, setIsSavingEmployee] = useState(false);
   const [isDeletingEmployee, setIsDeletingEmployee] = useState(false);
 
+  // Branch filter for attendance log ("" = all branches)
+  const [attendanceBranchFilter, setAttendanceBranchFilter] = useState<string>("");
+
   // Map default position state
   const [defaultLatLng, setDefaultLatLng] = useState<[number, number]>([0, 0]);
   const [geoReady, setGeoReady] = useState(false);
@@ -107,6 +111,10 @@ export function OrgDashboard() {
     }
   }, []);
 
+  const attendanceFilterInitialized = useRef(false);
+  const attendanceBranchFilterRef = useRef(attendanceBranchFilter);
+  attendanceBranchFilterRef.current = attendanceBranchFilter;
+
   useEffect(() => {
     const token = localStorage.getItem("accessToken");
     if (!token) {
@@ -119,10 +127,22 @@ export function OrgDashboard() {
     fetchEmployees();
     fetchAttendanceRecords();
 
-    // Refresh records every 30 seconds
-    const interval = setInterval(fetchAttendanceRecords, 30000);
+    // Refresh records every 30 seconds (use ref so current filter is used)
+    const interval = setInterval(() => {
+      fetchAttendanceRecords(attendanceBranchFilterRef.current || undefined);
+    }, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  // Refetch attendance when branch filter changes (skip first run to avoid double fetch on mount)
+  useEffect(() => {
+    if (!attendanceFilterInitialized.current) {
+      attendanceFilterInitialized.current = true;
+      return;
+    }
+    setLoading(true);
+    fetchAttendanceRecords(attendanceBranchFilter || undefined);
+  }, [attendanceBranchFilter]);
 
   const fetchOrgInfo = async () => {
     const token = localStorage.getItem("accessToken");
@@ -385,19 +405,18 @@ export function OrgDashboard() {
     }
   };
 
-  const fetchAttendanceRecords = async () => {
+  const fetchAttendanceRecords = async (branchIdFilter?: string) => {
     const token = localStorage.getItem("accessToken");
+    const url = new URL(`https://${projectId}.supabase.co/functions/v1/make-server-f3cc8027/attendance/records`);
+    if (branchIdFilter) url.searchParams.set("branchId", branchIdFilter);
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-f3cc8027/attendance/records`,
-        {
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${publicAnonKey}`,
-            "X-Authorization": `Bearer ${token}`,
-          },
-        }
-      );
+      const response = await fetch(url.toString(), {
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${publicAnonKey}`,
+          "X-Authorization": `Bearer ${token}`,
+        },
+      });
 
       const data = await response.json();
 
@@ -670,8 +689,23 @@ export function OrgDashboard() {
 
         {/* Attendance Records Table */}
         <Card className="p-6 bg-white">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
             <h2 className="text-xl font-semibold">Attendance Log</h2>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-600">Branch:</span>
+              <select
+                value={attendanceBranchFilter}
+                onChange={(e) => setAttendanceBranchFilter(e.target.value)}
+                className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              >
+                <option value="">All branches</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           {loading ? (
             <p className="text-center py-8 text-gray-500">Loading records...</p>

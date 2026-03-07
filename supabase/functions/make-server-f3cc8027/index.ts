@@ -621,7 +621,7 @@ app.post("/make-server-f3cc8027/attendance/clockin", async (c) => {
 });
 
 // ============================================================
-// GET ATTENDANCE RECORDS
+// GET ATTENDANCE RECORDS (optional ?branchId= for branch-specific view)
 // ============================================================
 app.get("/make-server-f3cc8027/attendance/records", async (c) => {
   try {
@@ -635,11 +635,20 @@ app.get("/make-server-f3cc8027/attendance/records", async (c) => {
       return c.json({ error: 'Organization not found' }, 404);
     }
 
+    const branchId = c.req.query('branchId'); // optional: filter by branch
+
     const allRecords = await kv.getByPrefix('attendance:');
 
-    const records = allRecords
-      .filter((record: any) => record.organizationId === user.id)
-      .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    let records = allRecords
+      .filter((record: any) => record.organizationId === user.id);
+
+    if (branchId) {
+      records = records.filter((record: any) => record.branchId === branchId);
+    }
+
+    records = records.sort(
+      (a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
 
     return c.json({ records });
   } catch (err) {
