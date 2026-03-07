@@ -666,13 +666,21 @@ app.put("/make-server-f3cc8027/org/employees/:id", async (c) => {
     }
 
     const targetId = c.req.param('id');
+    console.log(`Updating employee ${targetId} for org ${user.id}`);
     const empData = await kv.get(`employee:${targetId}`);
 
-    if (!empData || empData.organizationId !== user.id) {
+    if (!empData) {
+      console.log(`Employee ${targetId} not found in KV`);
+      return c.json({ error: 'Employee not found' }, 404);
+    }
+
+    if (empData.organizationId !== user.id) {
+      console.log(`Employee ${targetId} belongs to org ${empData.organizationId}, but requester is ${user.id}`);
       return c.json({ error: 'Employee not found' }, 404);
     }
 
     const { name, email } = await c.req.json();
+    console.log(`New data: name=${name}, email=${email}`);
 
     if (name) empData.name = name;
     if (email) empData.email = email;
@@ -682,9 +690,23 @@ app.put("/make-server-f3cc8027/org/employees/:id", async (c) => {
 
     // Update Auth Metadata if name changed
     if (name) {
-      await supabase.auth.admin.updateUserById(targetId, {
-        user_metadata: { ...user.user_metadata, name }
-      });
+      console.log(`Updating Auth metadata for ${targetId}`);
+      // First, get the current user to preserve other metadata fields
+      const { data: { user: targetUser }, error: getError } = await supabase.auth.admin.getUserById(targetId);
+      
+      if (!getError && targetUser) {
+        const updatedMetadata = { ...targetUser.user_metadata, name };
+        await supabase.auth.admin.updateUserById(targetId, {
+          user_metadata: updatedMetadata
+        });
+      } else {
+        console.log(`Could not fetch existing user metadata to merge: ${getError?.message}`);
+        // Fallback: just update the name if we really have to, 
+        // but we'll try to avoid this as it might wipe type/orgId
+        await supabase.auth.admin.updateUserById(targetId, {
+          user_metadata: { name } 
+        });
+      }
     }
 
     return c.json({ success: true, employee: empData });

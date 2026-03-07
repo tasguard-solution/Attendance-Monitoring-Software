@@ -323,7 +323,14 @@ export function OrgDashboard() {
         }
       );
 
-      const data = await response.json();
+      let data;
+      try {
+        data = await response.json();
+      } catch (parseError) {
+        console.error("Failed to parse error response:", parseError);
+        throw new Error(`Server returned status ${response.status}`);
+      }
+
       if (response.ok) {
         toast.success("Employee updated successfully");
         setEmployees(employees.map((e) => (e.id === editEmployee.id ? { ...e, name: editEmployeeName, email: editEmployeeEmail } : e)));
@@ -360,8 +367,13 @@ export function OrgDashboard() {
         toast.success("Employee deleted successfully");
         setEmployees(employees.filter((e) => e.id !== id));
       } else {
-        const data = await response.json();
-        toast.error(data.error || "Failed to delete employee");
+        let data;
+        try {
+          data = await response.json();
+          toast.error(data.error || "Failed to delete employee");
+        } catch (e) {
+          toast.error(`Deletion failed: ${response.status}`);
+        }
       }
     } catch (error) {
       console.error("Error deleting employee:", error);
