@@ -26,6 +26,9 @@ interface ClockInRecord {
 export function EmployeeScanner() {
   const navigate = useNavigate();
   const [scanning, setScanning] = useState(false);
+  const [scanPhase, setScanPhase] = useState<"IDLE" | "QR" | "FACE">("IDLE");
+  const [qrPayload, setQrPayload] = useState<string | null>(null);
+  const [timeLeft, setTimeLeft] = useState(10);
   const [cameraError, setCameraError] = useState("");
   const [lastClockIn, setLastClockIn] = useState<ClockInRecord | null>(null);
   const [userName, setUserName] = useState("");
@@ -84,6 +87,9 @@ export function EmployeeScanner() {
 
   const startFrontCamera = async () => {
     try {
+      setScanPhase("FACE");
+      setTimeLeft(10);
+
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user" },
       });
@@ -93,6 +99,7 @@ export function EmployeeScanner() {
     } catch (err) {
       console.error("Front camera error:", err);
       toast.error("Could not access front camera for face detection");
+      resetScanner();
     }
   };
 
@@ -107,8 +114,8 @@ export function EmployeeScanner() {
   const startScanning = async () => {
     setCameraError("");
     setScanning(true);
-
-    await startFrontCamera();
+    setScanPhase("QR");
+    setQrPayload(null);
 
     try {
       // Wait for the next tick to ensure the DOM element is rendered
@@ -174,7 +181,6 @@ export function EmployeeScanner() {
   };
 
   const stopScanning = async () => {
-    stopFrontCamera();
     if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
       try {
         await html5QrCodeRef.current.stop();
@@ -182,65 +188,120 @@ export function EmployeeScanner() {
         console.error("Error stopping scanner:", err);
       }
     }
+  };
+
+  const resetScanner = () => {
+    stopScanning();
+    stopFrontCamera();
     setScanning(false);
+    setScanPhase("IDLE");
+    setQrPayload(null);
+    setProcessingScan("");
   };
 
   const onScanSuccess = async (decodedText: string) => {
-    if (processingScan) return; // Prevent multiple scans while processing
+    if (processingScan || scanPhase !== "QR") return;
 
-    // Face detection & photo capture
-    const frontVideoElement = frontVideoRef.current;
-    let photoData = null;
+    // Stop the QR scanner as soon as we got the code
+    setProcessingScan("QR Decoded! Switching to face camera...");
+    await stopScanning();
+    setQrPayload(decodedText);
 
-    if (frontVideoElement && faceDetectorRef.current && frontVideoElement.readyState >= 2) {
-      setProcessingScan("Detecting face...");
-      const results = faceDetectorRef.current.detect(frontVideoElement);
+    // Switch to face scan phase
+    await startFrontCamera();
+    setProcessingScan("");
+  };
 
-      if (results.detections.length === 0) {
-        toast.error("No human face detected! Please look at the front camera.");
-        setProcessingScan("");
-        return; // Reject scan
+  // Face Detection Loop
+  useEffect(() => {
+    let timerId: NodeJS.Timeout;
+    let detectionId: number;
+
+    const checkFace = async () => {
+      const frontVideoElement = frontVideoRef.current;
+
+      if (scanPhase === "FACE" && frontVideoElement && faceDetectorRef.current && frontVideoElement.readyState >= 2 && !processingScan) {
+
+        const results = faceDetectorRef.current.detect(frontVideoElement);
+
+        if (results.detections.length > 0) {
+          // Face found!
+          setProcessingScan("Capturing photo...");
+
+          const canvas = document.createElement("canvas");
+          canvas.width = frontVideoElement.videoWidth;
+          canvas.height = frontVideoElement.videoHeight;
+          const ctx = canvas.getContext("2d");
+
+          let photoData = null;
+          if (ctx) {
+            ctx.drawImage(frontVideoElement, 0, 0, canvas.width, canvas.height);
+            photoData = canvas.toDataURL("image/jpeg", 0.7);
+          }
+
+          // Complete the sequence
+          stopFrontCamera();
+          finalizeClockIn(photoData);
+          return; // Stop loop
+        }
       }
 
-      // Face found! Capture frame & compress
-      setProcessingScan("Capturing photo...");
-      const canvas = document.createElement("canvas");
-      canvas.width = frontVideoElement.videoWidth;
-      canvas.height = frontVideoElement.videoHeight;
-      const ctx = canvas.getContext("2d");
-
-      if (ctx) {
-        ctx.drawImage(frontVideoElement, 0, 0, canvas.width, canvas.height);
-        // Compress JPEG to 70% quality
-        photoData = canvas.toDataURL("image/jpeg", 0.7);
+      // Keep checking on next animation frame
+      if (scanPhase === "FACE") {
+        detectionId = requestAnimationFrame(checkFace);
       }
-    } else if (!faceDetectorRef.current) {
-      toast.error("Face detection model still loading. Please wait.");
-      return;
-    } else if (frontVideoElement && frontVideoElement.readyState < 2) {
-      toast.error("Front camera is not ready yet. Please wait.");
+    };
+
+    if (scanPhase === "FACE") {
+      // Start 10 timer
+      timerId = setInterval(() => {
+        setTimeLeft((prev) => {
+          if (prev <= 1) {
+            // Timeout reached!
+            toast.error("Face scan timed out! Please try again.");
+            resetScanner();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      // Start detection loop
+      checkFace();
+    }
+
+    return () => {
+      clearInterval(timerId);
+      cancelAnimationFrame(detectionId);
+    };
+  }, [scanPhase, processingScan]);
+
+  const finalizeClockIn = (photoData: string | null) => {
+    if (!qrPayload) {
+      toast.error("QR Code data lost. Please try again.");
+      resetScanner();
       return;
     }
 
-    setProcessingScan("");
-
-    // Stop scanning immediately upon successful capture
-    await stopScanning();
-
-    // Get GPS location
     if (!navigator.geolocation) {
       toast.error("Geolocation is not supported by your browser");
+      resetScanner();
       return;
     }
+
+    toast.loading("Getting location...", { id: "clockin" });
 
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const { latitude, longitude } = position.coords;
-        await clockIn(decodedText, latitude, longitude, photoData);
+        await clockIn(qrPayload, latitude, longitude, photoData);
+        resetScanner(); // Reset view to start after completion
       },
       (error) => {
         console.error("Geolocation error:", error);
+        toast.dismiss("clockin");
         toast.error("Unable to get location. Please enable location services.");
+        resetScanner();
       }
     );
   };
@@ -292,7 +353,7 @@ export function EmployeeScanner() {
   };
 
   const handleLogout = () => {
-    stopScanning();
+    resetScanner();
     localStorage.removeItem("accessToken");
     localStorage.removeItem("userType");
     navigate("/employee/login");
@@ -343,7 +404,7 @@ export function EmployeeScanner() {
                 className="bg-green-600 hover:bg-green-700 flex items-center gap-2"
               >
                 <Camera className="w-5 h-5" />
-                {isFaceModelLoading ? "Loading AI..." : "Start Scanning"}
+                {isFaceModelLoading ? "Loading AI..." : "Start Sequence"}
               </Button>
             </div>
           )}
@@ -355,28 +416,43 @@ export function EmployeeScanner() {
                   {processingScan}
                 </div>
               )}
+
               <div className="relative">
-                <div
-                  id="qr-reader"
-                  ref={scannerRef}
-                  className="rounded-lg overflow-hidden"
-                ></div>
-                {/* Front camera preview (PIP) */}
-                <video
-                  ref={frontVideoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="absolute top-4 right-4 w-28 h-36 object-cover rounded-lg border-2 border-green-500 shadow-lg z-10 bg-black/50"
-                />
+                {scanPhase === "QR" && (
+                  <div
+                    id="qr-reader"
+                    ref={scannerRef}
+                    className="rounded-lg overflow-hidden"
+                  ></div>
+                )}
+
+                {scanPhase === "FACE" && (
+                  <div className="relative rounded-lg overflow-hidden border-4 border-emerald-400 bg-black aspect-square max-w-sm mx-auto flex items-center justify-center">
+                    <video
+                      ref={frontVideoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute top-4 left-0 right-0 text-center">
+                      <span className="bg-black/50 text-white px-4 py-2 rounded-full font-mono text-lg font-bold">
+                        {timeLeft}s
+                      </span>
+                    </div>
+                    <div className="absolute bottom-4 left-0 right-0 text-center text-white font-medium bg-black/40 py-2">
+                      Please look directly at the camera
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="flex justify-center">
                 <Button
-                  onClick={stopScanning}
+                  onClick={resetScanner}
                   variant="outline"
                   className="flex items-center gap-2"
                 >
-                  Stop Scanning
+                  Cancel Sequence
                 </Button>
               </div>
             </div>
