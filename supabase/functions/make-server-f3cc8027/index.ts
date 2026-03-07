@@ -67,6 +67,26 @@ app.get("/make-server-f3cc8027/health", (c) => {
   return c.json({ status: "ok" });
 });
 
+// JSON 404 Handler
+app.notFound((c) => {
+  console.log(`[404] ${c.req.method} ${c.req.path}`);
+  return c.json({ 
+    error: "Route not found", 
+    method: c.req.method, 
+    path: c.req.path,
+    url: c.req.url
+  }, 404);
+});
+
+// JSON Error Handler
+app.onError((err, c) => {
+  console.error(`[500] ${err.message}`, err);
+  return c.json({ 
+    error: "Internal Server Error", 
+    message: err.message 
+  }, 500);
+});
+
 // ============================================================
 // ADMIN ENDPOINTS
 // ============================================================

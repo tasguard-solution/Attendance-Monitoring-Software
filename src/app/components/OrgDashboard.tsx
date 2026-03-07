@@ -324,11 +324,12 @@ export function OrgDashboard() {
       );
 
       let data;
+      const responseText = await response.text();
       try {
-        data = await response.json();
+        data = JSON.parse(responseText);
       } catch (parseError) {
-        console.error("Failed to parse error response:", parseError);
-        throw new Error(`Server returned status ${response.status}`);
+        console.error("Server response was not JSON:", responseText);
+        throw new Error(`Server returned status ${response.status}: ${responseText}`);
       }
 
       if (response.ok) {
@@ -336,7 +337,8 @@ export function OrgDashboard() {
         setEmployees(employees.map((e) => (e.id === editEmployee.id ? { ...e, name: editEmployeeName, email: editEmployeeEmail } : e)));
         setShowEditEmployeeDialog(false);
       } else {
-        toast.error(data.error || "Failed to update employee");
+        console.error("Update failed:", data);
+        toast.error(data.error || `Update failed: ${response.status}`);
       }
     } catch (error) {
       console.error("Error updating employee:", error);
