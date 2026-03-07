@@ -13,8 +13,11 @@ import {
     Trash2,
     RefreshCw,
     Search,
+    Pencil,
+    Eye,
 } from "lucide-react";
 import { projectId, publicAnonKey } from "../../../utils/supabase/info";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
 
 interface SystemStats {
     organizations: number;
@@ -29,12 +32,44 @@ interface Organization {
     createdAt: string;
 }
 
+interface Employee {
+    id: string;
+    name: string;
+    email: string;
+    employeeId: string;
+    organizationId: string;
+    organizationName: string;
+}
+
 export function AdminDashboard() {
     const navigate = useNavigate();
     const [stats, setStats] = useState<SystemStats | null>(null);
     const [organizations, setOrganizations] = useState<Organization[]>([]);
+    const [employees, setEmployees] = useState<Employee[]>([]);
     const [loading, setLoading] = useState(true);
     const [isWiping, setIsWiping] = useState(false);
+    const [orgFilter, setOrgFilter] = useState("");
+    const [staffOrgFilter, setStaffOrgFilter] = useState("");
+
+    // Edit org dialog
+    const [showEditOrgDialog, setShowEditOrgDialog] = useState(false);
+    const [editOrg, setEditOrg] = useState<Organization | null>(null);
+    const [editOrgName, setEditOrgName] = useState("");
+    const [editOrgEmail, setEditOrgEmail] = useState("");
+    const [isSavingOrg, setIsSavingOrg] = useState(false);
+
+    // Edit employee dialog
+    const [showEditEmployeeDialog, setShowEditEmployeeDialog] = useState(false);
+    const [editEmployee, setEditEmployee] = useState<Employee | null>(null);
+    const [editEmployeeName, setEditEmployeeName] = useState("");
+    const [editEmployeeEmail, setEditEmployeeEmail] = useState("");
+    const [isSavingEmployee, setIsSavingEmployee] = useState(false);
+
+    // Inspect org dialog (org + employees)
+    const [showInspectDialog, setShowInspectDialog] = useState(false);
+    const [inspectOrg, setInspectOrg] = useState<Organization | null>(null);
+    const [inspectEmployees, setInspectEmployees] = useState<Employee[]>([]);
+    const [inspectLoading, setInspectLoading] = useState(false);
 
     useEffect(() => {
         const adminToken = localStorage.getItem("adminToken");
@@ -51,7 +86,7 @@ export function AdminDashboard() {
         const adminToken = localStorage.getItem("adminToken");
 
         try {
-            const [statsRes, orgsRes] = await Promise.all([
+            const [statsRes, orgsRes, employeesRes] = await Promise.all([
                 fetch(`https://${projectId}.supabase.co/functions/v1/make-server-f3cc8027/admin/stats`, {
                     headers: {
                         "Authorization": `Bearer ${publicAnonKey}`,
@@ -63,16 +98,24 @@ export function AdminDashboard() {
                         "Authorization": `Bearer ${publicAnonKey}`,
                         "X-Authorization": `Bearer ${adminToken}`,
                     },
-                })
+                }),
+                fetch(`https://${projectId}.supabase.co/functions/v1/make-server-f3cc8027/admin/employees`, {
+                    headers: {
+                        "Authorization": `Bearer ${publicAnonKey}`,
+                        "X-Authorization": `Bearer ${adminToken}`,
+                    },
+                }),
             ]);
 
-            if (!statsRes.ok || !orgsRes.ok) throw new Error("Failed to fetch administrative data");
+            if (!statsRes.ok || !orgsRes.ok || !employeesRes.ok) throw new Error("Failed to fetch administrative data");
 
             const statsData = await statsRes.json();
             const orgsData = await orgsRes.json();
+            const employeesData = await employeesRes.json();
 
             setStats(statsData.stats);
-            setOrganizations(orgsData.organizations);
+            setOrganizations(orgsData.organizations || []);
+            setEmployees(employeesData.employees || []);
         } catch (error: any) {
             toast.error(error.message);
             if (error.message.includes("Unauthorized")) {
@@ -141,11 +184,151 @@ export function AdminDashboard() {
         }
     };
 
+    const openEditOrg = (org: Organization) => {
+        setEditOrg(org);
+        setEditOrgName(org.name);
+        setEditOrgEmail(org.email);
+        setShowEditOrgDialog(true);
+    };
+
+    const handleSaveOrg = async () => {
+        if (!editOrg) return;
+        setIsSavingOrg(true);
+        const adminToken = localStorage.getItem("adminToken");
+        try {
+            const response = await fetch(
+                `https://${projectId}.supabase.co/functions/v1/make-server-f3cc8027/admin/organizations/${editOrg.id}`,
+                {
+                    method: "PUT",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${publicAnonKey}`,
+                        "X-Authorization": `Bearer ${adminToken}`,
+                    },
+                    body: JSON.stringify({ name: editOrgName, email: editOrgEmail }),
+                }
+            );
+            if (!response.ok) throw new Error("Update failed");
+            toast.success("Organization updated");
+            setShowEditOrgDialog(false);
+            if (showInspectDialog && inspectOrg?.id === editOrg.id) {
+                setInspectOrg({ ...inspectOrg, name: editOrgName, email: editOrgEmail });
+            }
+            fetchData();
+        } catch (error: any) {
+            toast.error(error.message);
+        } finally {
+            setIsSavingOrg(false);
+        }
+    };
+
+    const openEditEmployee = (emp: Employee) => {
+        setEditEmployee(emp);
+        setEditEmployeeName(emp.name);
+        setEditEmployeeEmail(emp.email);
+        setShowEditEmployeeDialog(true);
+    };
+
+    const handleSaveEmployee = async () => {
+        if (!editEmployee) return;
+        setIsSavingEmployee(true);
+        const adminToken = localStorage.getItem("adminToken");
+        try {
+            const response = await fetch(
+                `https://${projectId}.supabase.co/functions/v1/make-server-f3cc8027/admin/employees/${editEmployee.id}`,
+                {
+                    method: "PUT",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${publicAnonKey}`,
+                        "X-Authorization": `Bearer ${adminToken}`,
+                    },
+                    body: JSON.stringify({ name: editEmployeeName, email: editEmployeeEmail }),
+                }
+            );
+            if (!response.ok) throw new Error("Update failed");
+            toast.success("Employee updated");
+            setShowEditEmployeeDialog(false);
+            fetchData();
+            if (showInspectDialog && inspectOrg && editEmployee.organizationId === inspectOrg.id) {
+                setInspectEmployees((prev) =>
+                    prev.map((e) => (e.id === editEmployee.id ? { ...e, name: editEmployeeName, email: editEmployeeEmail } : e))
+                );
+            }
+        } catch (error: any) {
+            toast.error(error.message);
+        } finally {
+            setIsSavingEmployee(false);
+        }
+    };
+
+    const handleDeleteEmployee = async (id: string, name: string) => {
+        if (!confirm(`Delete employee "${name}"? This will remove their account.`)) return;
+        const adminToken = localStorage.getItem("adminToken");
+        try {
+            const response = await fetch(
+                `https://${projectId}.supabase.co/functions/v1/make-server-f3cc8027/admin/employees/${id}`,
+                {
+                    method: "DELETE",
+                    headers: {
+                        "Authorization": `Bearer ${publicAnonKey}`,
+                        "X-Authorization": `Bearer ${adminToken}`,
+                    },
+                }
+            );
+            if (!response.ok) throw new Error("Deletion failed");
+            toast.success("Employee removed");
+            fetchData();
+            if (showInspectDialog && inspectEmployees.some((e) => e.id === id)) {
+                setInspectEmployees((prev) => prev.filter((e) => e.id !== id));
+            }
+        } catch (error: any) {
+            toast.error(error.message);
+        }
+    };
+
+    const handleInspectOrg = async (org: Organization) => {
+        setInspectOrg(org);
+        setShowInspectDialog(true);
+        setInspectLoading(true);
+        const adminToken = localStorage.getItem("adminToken");
+        try {
+            const response = await fetch(
+                `https://${projectId}.supabase.co/functions/v1/make-server-f3cc8027/admin/organizations/${org.id}`,
+                {
+                    headers: {
+                        "Authorization": `Bearer ${publicAnonKey}`,
+                        "X-Authorization": `Bearer ${adminToken}`,
+                    },
+                }
+            );
+            if (!response.ok) throw new Error("Failed to load");
+            const data = await response.json();
+            setInspectEmployees(data.employees || []);
+        } catch (error: any) {
+            toast.error(error.message);
+        } finally {
+            setInspectLoading(false);
+        }
+    };
+
     const handleLogout = () => {
         localStorage.removeItem("adminToken");
         localStorage.removeItem("userType");
         navigate("/admin/login-page");
     };
+
+    const filteredOrgs = orgFilter
+        ? organizations.filter(
+            (o) =>
+                o.name.toLowerCase().includes(orgFilter.toLowerCase()) ||
+                o.email.toLowerCase().includes(orgFilter.toLowerCase())
+        )
+        : organizations;
+
+    const filteredEmployees = staffOrgFilter
+        ? employees.filter((e) => e.organizationId === staffOrgFilter)
+        : employees;
 
     return (
         <div className="min-h-screen bg-[#0f172a] text-slate-200">
@@ -243,6 +426,8 @@ export function AdminDashboard() {
                                 <input
                                     type="text"
                                     placeholder="Filter orgs..."
+                                    value={orgFilter}
+                                    onChange={(e) => setOrgFilter(e.target.value)}
                                     className="bg-[#0f172a] border-[#334155] rounded-full pl-9 pr-4 py-1 text-sm focus:ring-1 focus:ring-blue-500 outline-none w-64"
                                 />
                             </div>
@@ -262,10 +447,10 @@ export function AdminDashboard() {
                                     <tbody>
                                         {loading ? (
                                             <tr><td colSpan={4} className="py-20 text-center text-slate-500 italic">Accessing node records...</td></tr>
-                                        ) : organizations.length === 0 ? (
+                                        ) : filteredOrgs.length === 0 ? (
                                             <tr><td colSpan={4} className="py-20 text-center text-slate-500 italic">No nodes detected in the network</td></tr>
                                         ) : (
-                                            organizations.map((org) => (
+                                            filteredOrgs.map((org) => (
                                                 <tr key={org.id} className="border-b border-[#334155] hover:bg-slate-800/30 transition-colors">
                                                     <td className="py-4 px-6">
                                                         <span className="font-bold text-white">{org.name}</span>
@@ -280,14 +465,95 @@ export function AdminDashboard() {
                                                             <Button
                                                                 variant="ghost"
                                                                 size="sm"
+                                                                onClick={() => handleInspectOrg(org)}
+                                                                className="text-slate-400 hover:text-slate-300 hover:bg-slate-700/50"
+                                                                title="View details & staff"
+                                                            >
+                                                                <Eye className="w-4 h-4" />
+                                                            </Button>
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                onClick={() => openEditOrg(org)}
                                                                 className="text-blue-400 hover:text-blue-300 hover:bg-blue-400/10"
                                                             >
-                                                                Inspect
+                                                                <Pencil className="w-4 h-4" />
                                                             </Button>
                                                             <Button
                                                                 variant="ghost"
                                                                 size="sm"
                                                                 onClick={() => handleDeleteOrganization(org.id, org.name)}
+                                                                className="text-red-400 hover:text-red-300 hover:bg-red-400/10"
+                                                            >
+                                                                <Trash2 className="w-4 h-4" />
+                                                            </Button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </Card>
+                    </section>
+
+                    {/* Staff Table - full width row */}
+                    <section className="lg:col-span-3">
+                        <div className="flex items-center justify-between mb-4">
+                            <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                                <Users className="w-5 h-5 text-emerald-400" />
+                                Staff Registry
+                            </h2>
+                            <select
+                                value={staffOrgFilter}
+                                onChange={(e) => setStaffOrgFilter(e.target.value)}
+                                className="bg-[#0f172a] border border-[#334155] rounded-lg px-3 py-2 text-sm text-slate-300 focus:ring-1 focus:ring-blue-500 outline-none"
+                            >
+                                <option value="">All organizations</option>
+                                {organizations.map((o) => (
+                                    <option key={o.id} value={o.id}>{o.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <Card className="bg-[#1e293b] border-[#334155] overflow-hidden shadow-2xl">
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left">
+                                    <thead>
+                                        <tr className="bg-[#0f172a]/50 text-slate-400 text-[10px] uppercase tracking-widest border-b border-[#334155]">
+                                            <th className="py-4 px-6 font-bold">Name</th>
+                                            <th className="py-4 px-6 font-bold">Employee ID</th>
+                                            <th className="py-4 px-6 font-bold">Email</th>
+                                            <th className="py-4 px-6 font-bold">Organization</th>
+                                            <th className="py-4 px-6 font-bold text-right">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {loading ? (
+                                            <tr><td colSpan={5} className="py-20 text-center text-slate-500 italic">Loading...</td></tr>
+                                        ) : filteredEmployees.length === 0 ? (
+                                            <tr><td colSpan={5} className="py-20 text-center text-slate-500 italic">No staff records</td></tr>
+                                        ) : (
+                                            filteredEmployees.map((emp) => (
+                                                <tr key={emp.id} className="border-b border-[#334155] hover:bg-slate-800/30 transition-colors">
+                                                    <td className="py-4 px-6 font-medium text-white">{emp.name}</td>
+                                                    <td className="py-4 px-6 text-sm text-slate-400 font-mono">{emp.employeeId}</td>
+                                                    <td className="py-4 px-6 text-sm text-slate-400 font-mono">{emp.email}</td>
+                                                    <td className="py-4 px-6 text-sm text-slate-400">{emp.organizationName}</td>
+                                                    <td className="py-4 px-6 text-right">
+                                                        <div className="flex justify-end gap-2">
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                onClick={() => openEditEmployee(emp)}
+                                                                className="text-blue-400 hover:text-blue-300 hover:bg-blue-400/10"
+                                                            >
+                                                                <Pencil className="w-4 h-4" />
+                                                            </Button>
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                onClick={() => handleDeleteEmployee(emp.id, emp.name)}
                                                                 className="text-red-400 hover:text-red-300 hover:bg-red-400/10"
                                                             >
                                                                 <Trash2 className="w-4 h-4" />
@@ -360,6 +626,150 @@ export function AdminDashboard() {
                     </section>
                 </div>
             </main>
+
+            {/* Edit Organization Dialog */}
+            <Dialog open={showEditOrgDialog} onOpenChange={setShowEditOrgDialog}>
+                <DialogContent className="sm:max-w-md bg-[#1e293b] border-[#334155] text-slate-200">
+                    <DialogHeader>
+                        <DialogTitle className="text-white">Edit Organization</DialogTitle>
+                        <DialogDescription className="text-slate-400">
+                            Update organization name and email.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">Name</label>
+                            <input
+                                type="text"
+                                value={editOrgName}
+                                onChange={(e) => setEditOrgName(e.target.value)}
+                                className="w-full rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2 text-white focus:ring-1 focus:ring-blue-500 outline-none"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">Email</label>
+                            <input
+                                type="email"
+                                value={editOrgEmail}
+                                onChange={(e) => setEditOrgEmail(e.target.value)}
+                                className="w-full rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2 text-white focus:ring-1 focus:ring-blue-500 outline-none"
+                            />
+                        </div>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                        <Button variant="outline" onClick={() => setShowEditOrgDialog(false)} className="border-[#334155]">
+                            Cancel
+                        </Button>
+                        <Button onClick={handleSaveOrg} disabled={isSavingOrg} className="bg-blue-600 hover:bg-blue-700">
+                            {isSavingOrg ? "Saving..." : "Save"}
+                        </Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* Edit Employee Dialog */}
+            <Dialog open={showEditEmployeeDialog} onOpenChange={setShowEditEmployeeDialog}>
+                <DialogContent className="sm:max-w-md bg-[#1e293b] border-[#334155] text-slate-200">
+                    <DialogHeader>
+                        <DialogTitle className="text-white">Edit Employee</DialogTitle>
+                        <DialogDescription className="text-slate-400">
+                            Update employee name and email.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">Name</label>
+                            <input
+                                type="text"
+                                value={editEmployeeName}
+                                onChange={(e) => setEditEmployeeName(e.target.value)}
+                                className="w-full rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2 text-white focus:ring-1 focus:ring-blue-500 outline-none"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">Email</label>
+                            <input
+                                type="email"
+                                value={editEmployeeEmail}
+                                onChange={(e) => setEditEmployeeEmail(e.target.value)}
+                                className="w-full rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2 text-white focus:ring-1 focus:ring-blue-500 outline-none"
+                            />
+                        </div>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                        <Button variant="outline" onClick={() => setShowEditEmployeeDialog(false)} className="border-[#334155]">
+                            Cancel
+                        </Button>
+                        <Button onClick={handleSaveEmployee} disabled={isSavingEmployee} className="bg-blue-600 hover:bg-blue-700">
+                            {isSavingEmployee ? "Saving..." : "Save"}
+                        </Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* Inspect Organization Dialog */}
+            <Dialog open={showInspectDialog} onOpenChange={setShowInspectDialog}>
+                <DialogContent className="sm:max-w-lg bg-[#1e293b] border-[#334155] text-slate-200 max-h-[85vh] overflow-hidden flex flex-col">
+                    <DialogHeader>
+                        <DialogTitle className="text-white flex items-center justify-between">
+                            <span>{inspectOrg?.name || "Organization"}</span>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => inspectOrg && openEditOrg(inspectOrg)}
+                                className="text-blue-400 hover:text-blue-300"
+                            >
+                                <Pencil className="w-4 h-4 mr-1" />
+                                Edit
+                            </Button>
+                        </DialogTitle>
+                        <DialogDescription className="text-slate-400">
+                            {inspectOrg?.email} · ID: {inspectOrg?.id}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="flex-1 overflow-auto py-4">
+                        <h4 className="text-sm font-semibold text-slate-300 mb-2">Staff ({inspectEmployees.length})</h4>
+                        {inspectLoading ? (
+                            <p className="text-slate-500 italic">Loading...</p>
+                        ) : inspectEmployees.length === 0 ? (
+                            <p className="text-slate-500 italic">No employees</p>
+                        ) : (
+                            <div className="space-y-2">
+                                {inspectEmployees.map((emp) => (
+                                    <div
+                                        key={emp.id}
+                                        className="flex items-center justify-between rounded-lg border border-[#334155] bg-[#0f172a]/50 px-4 py-3"
+                                    >
+                                        <div>
+                                            <span className="font-medium text-white">{emp.name}</span>
+                                            <span className="text-slate-500 font-mono text-sm ml-2">#{emp.employeeId}</span>
+                                            <div className="text-xs text-slate-400">{emp.email}</div>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => openEditEmployee(emp)}
+                                                className="text-blue-400 hover:bg-blue-400/10 h-8"
+                                            >
+                                                <Pencil className="w-3 h-3" />
+                                            </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => handleDeleteEmployee(emp.id, emp.name)}
+                                                className="text-red-400 hover:bg-red-400/10 h-8"
+                                            >
+                                                <Trash2 className="w-3 h-3" />
+                                            </Button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

@@ -236,6 +236,155 @@ app.delete("/make-server-f3cc8027/admin/organizations/:id", async (c) => {
   }
 });
 
+// Admin Get Organization by ID (with employees for Inspect)
+app.get("/make-server-f3cc8027/admin/organizations/:id", async (c) => {
+  if (!await verifyAdmin(c)) return c.json({ error: "Unauthorized" }, 401);
+  try {
+    const orgId = c.req.param('id');
+    const orgData = await kv.get(`org:${orgId}`);
+    if (!orgData) return c.json({ error: "Organization not found" }, 404);
+
+    const allEmployees = await kv.getByPrefix('employee:');
+    const employees = allEmployees
+      .filter((emp: any) => emp?.organizationId === orgId && emp?.id)
+      .map((emp: any) => ({ id: emp.id, name: emp.name, email: emp.email, employeeId: emp.employeeId }));
+
+    return c.json({ organization: orgData, employees });
+  } catch (err) {
+    return c.json({ error: "Failed to fetch organization" }, 500);
+  }
+});
+
+// Admin Update Organization
+app.put("/make-server-f3cc8027/admin/organizations/:id", async (c) => {
+  if (!await verifyAdmin(c)) return c.json({ error: "Unauthorized" }, 401);
+  try {
+    const orgId = c.req.param('id');
+    const orgData = await kv.get(`org:${orgId}`);
+    if (!orgData) return c.json({ error: "Organization not found" }, 404);
+
+    const body = await c.req.json();
+    const { name, email } = body;
+    if (name) orgData.name = name;
+    if (email) orgData.email = email;
+
+    await kv.set(`org:${orgId}`, orgData);
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+    const updates: { user_metadata?: Record<string, unknown>; email?: string } = {};
+    if (name) {
+      const { data: { user: targetUser } } = await supabase.auth.admin.getUserById(orgId);
+      updates.user_metadata = targetUser ? { ...targetUser.user_metadata, name } : { name };
+    }
+    if (email) updates.email = email;
+    if (Object.keys(updates).length > 0) {
+      await supabase.auth.admin.updateUserById(orgId, updates);
+    }
+
+    return c.json({ success: true, organization: orgData });
+  } catch (err) {
+    return c.json({ error: "Failed to update organization" }, 500);
+  }
+});
+
+// Admin List All Employees
+app.get("/make-server-f3cc8027/admin/employees", async (c) => {
+  if (!await verifyAdmin(c)) return c.json({ error: "Unauthorized" }, 401);
+  try {
+    const orgIdFilter = c.req.query('organizationId');
+    const allEmployees = await kv.getByPrefix('employee:');
+    const allOrgs = await kv.getByPrefix('org:');
+    const orgMap = Object.fromEntries(
+      (allOrgs as any[]).filter((o) => o?.id).map((o) => [o.id, o])
+    );
+
+    let employees = (allEmployees as any[])
+      .filter((emp) => emp?.id && emp?.organizationId)
+      .map((emp) => ({
+        id: emp.id,
+        name: emp.name,
+        email: emp.email,
+        employeeId: emp.employeeId,
+        organizationId: emp.organizationId,
+        organizationName: orgMap[emp.organizationId]?.name || "Unknown",
+      }));
+
+    if (orgIdFilter) {
+      employees = employees.filter((e) => e.organizationId === orgIdFilter);
+    }
+
+    return c.json({ employees });
+  } catch (err) {
+    return c.json({ error: "Failed to fetch employees" }, 500);
+  }
+});
+
+// Admin Update Employee
+app.put("/make-server-f3cc8027/admin/employees/:id", async (c) => {
+  if (!await verifyAdmin(c)) return c.json({ error: "Unauthorized" }, 401);
+  try {
+    const targetId = c.req.param('id');
+    const empData = await kv.get(`employee:${targetId}`);
+    if (!empData) return c.json({ error: "Employee not found" }, 404);
+
+    const body = await c.req.json();
+    const { name, email } = body;
+    if (name) empData.name = name;
+    if (email) empData.email = email;
+
+    await kv.set(`employee:${targetId}`, empData);
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+    if (name) {
+      const { data: { user: targetUser } } = await supabase.auth.admin.getUserById(targetId);
+      if (targetUser) {
+        await supabase.auth.admin.updateUserById(targetId, {
+          user_metadata: { ...targetUser.user_metadata, name },
+          ...(email && { email }),
+        });
+      } else {
+        await supabase.auth.admin.updateUserById(targetId, { user_metadata: { name } });
+      }
+    } else if (email) {
+      await supabase.auth.admin.updateUserById(targetId, { email });
+    }
+
+    return c.json({ success: true, employee: empData });
+  } catch (err) {
+    return c.json({ error: "Failed to update employee" }, 500);
+  }
+});
+
+// Admin Delete Employee
+app.delete("/make-server-f3cc8027/admin/employees/:id", async (c) => {
+  if (!await verifyAdmin(c)) return c.json({ error: "Unauthorized" }, 401);
+  try {
+    const targetId = c.req.param('id');
+    const empData = await kv.get(`employee:${targetId}`);
+    if (!empData) return c.json({ error: "Employee not found" }, 404);
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    await kv.del(`employee:${targetId}`);
+    await kv.del(`employee:empId:${empData.employeeId}`);
+    const { error: delError } = await supabase.auth.admin.deleteUser(targetId);
+    if (delError) console.log(`Auth delete error for ${targetId}: ${delError.message}`);
+
+    return c.json({ success: true });
+  } catch (err) {
+    return c.json({ error: "Failed to delete employee" }, 500);
+  }
+});
+
 
 // ============================================================
 // ORGANIZATION SIGNUP
