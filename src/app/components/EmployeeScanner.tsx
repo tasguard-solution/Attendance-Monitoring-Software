@@ -131,26 +131,37 @@ export function EmployeeScanner() {
         aspectRatio: 1.0,
       };
 
-      // Try back camera first, fall back to any available camera
+      // Try back camera first ("environment")
       try {
         await html5QrCodeRef.current.start(
-          { facingMode: "environment" },
+          { facingMode: { exact: "environment" } },
           config,
           onScanSuccess,
           onScanFailure
         );
       } catch (backCameraError) {
         console.log(
-          "Back camera not available, trying any available camera:",
+          "Strict back camera not available, falling back to general environment or any:",
           backCameraError
         );
-        // Try with any available camera
-        await html5QrCodeRef.current.start(
-          { facingMode: "user" },
-          config,
-          onScanSuccess,
-          onScanFailure
-        );
+        try {
+          // Fallback to preferred environment
+          await html5QrCodeRef.current.start(
+            { facingMode: "environment" },
+            config,
+            onScanSuccess,
+            onScanFailure
+          );
+        } catch (generalError) {
+          console.log("No back camera found, falling back to any camera", generalError);
+          // Ultimate fallback
+          await html5QrCodeRef.current.start(
+            { facingMode: "user" },
+            config,
+            onScanSuccess,
+            onScanFailure
+          );
+        }
       }
     } catch (err: any) {
       console.error("Camera error:", err);
