@@ -20,7 +20,8 @@ function getR2Client() {
 }
 
 // Enable logger
-app.use('*', logger(console.log));
+// Disable generic logger to avoid response interference
+// app.use('*', logger(console.log));
 
 // Enable CORS for all routes and methods
 app.use(
@@ -659,60 +660,72 @@ app.get("/make-server-f3cc8027/org/employees", async (c) => {
 // UPDATE EMPLOYEE
 // ============================================================
 app.put("/make-server-f3cc8027/org/employees/:id", async (c) => {
+  const targetId = c.req.param('id');
+  console.log(`[DEBUG] PUT /employees/${targetId} - START`);
+  
   try {
     const { user, error, supabase } = await getAuthUser(c);
     if (!user?.id || error) {
-      return c.json({ error: 'Unauthorized' }, 401);
+      console.log(`[DEBUG] Unauthorized: ${error?.message || 'No user ID'}`);
+      return c.json({ error: 'Unauthorized', details: error?.message }, 401);
     }
 
-    const targetId = c.req.param('id');
-    console.log(`Updating employee ${targetId} for org ${user.id}`);
-    const empData = await kv.get(`employee:${targetId}`);
+    console.log(`[DEBUG] Authenticated as org: ${user.id}`);
 
+    const empData = await kv.get(`employee:${targetId}`);
     if (!empData) {
-      console.log(`Employee ${targetId} not found in KV`);
-      return c.json({ error: 'Employee not found' }, 404);
+      console.log(`[DEBUG] Employee ${targetId} NOT FOUND in KV`);
+      return c.json({ error: `Employee ${targetId} not found` }, 404);
     }
 
     if (empData.organizationId !== user.id) {
-      console.log(`Employee ${targetId} belongs to org ${empData.organizationId}, but requester is ${user.id}`);
-      return c.json({ error: 'Employee not found' }, 404);
+      console.log(`[DEBUG] Org mismatch: emp.org=${empData.organizationId}, user.org=${user.id}`);
+      return c.json({ error: 'Employee belongs to another organization' }, 404);
     }
 
-    const { name, email } = await c.req.json();
-    console.log(`New data: name=${name}, email=${email}`);
+    let body;
+    try {
+      body = await c.req.json();
+    } catch (e) {
+      console.log(`[DEBUG] Failed to parse request body: ${e}`);
+      return c.json({ error: 'Invalid JSON body' }, 400);
+    }
+
+    const { name, email } = body;
+    console.log(`[DEBUG] Updating to: name=${name}, email=${email}`);
 
     if (name) empData.name = name;
     if (email) empData.email = email;
 
     // Update KV
     await kv.set(`employee:${targetId}`, empData);
+    console.log(`[DEBUG] KV updated for ${targetId}`);
 
     // Update Auth Metadata if name changed
     if (name) {
-      console.log(`Updating Auth metadata for ${targetId}`);
-      // First, get the current user to preserve other metadata fields
+      console.log(`[DEBUG] Fetching user ${targetId} for metadata merge`);
       const { data: { user: targetUser }, error: getError } = await supabase.auth.admin.getUserById(targetId);
       
       if (!getError && targetUser) {
         const updatedMetadata = { ...targetUser.user_metadata, name };
+        console.log(`[DEBUG] Merging metadata for ${targetId}`);
         await supabase.auth.admin.updateUserById(targetId, {
           user_metadata: updatedMetadata
         });
       } else {
-        console.log(`Could not fetch existing user metadata to merge: ${getError?.message}`);
-        // Fallback: just update the name if we really have to, 
-        // but we'll try to avoid this as it might wipe type/orgId
+        console.log(`[DEBUG] Metadata merge skipped: ${getError?.message}`);
         await supabase.auth.admin.updateUserById(targetId, {
           user_metadata: { name } 
         });
       }
     }
 
+    console.log(`[DEBUG] PUT /employees/${targetId} - SUCCESS`);
     return c.json({ success: true, employee: empData });
-  } catch (err) {
-    console.log(`Update employee error: ${err}`);
-    return c.json({ error: "Failed to update employee" }, 500);
+  } catch (err: any) {
+    console.log(`[DEBUG] UNCAUGHT ERROR: ${err.message}`);
+    console.log(err.stack);
+    return c.json({ error: "Internal Server Error", message: err.message }, 500);
   }
 });
 
