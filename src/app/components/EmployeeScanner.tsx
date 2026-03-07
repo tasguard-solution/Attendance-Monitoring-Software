@@ -39,6 +39,12 @@ export function EmployeeScanner() {
   const faceDetectorRef = useRef<FaceDetector | null>(null);
   const frontVideoRef = useRef<HTMLVideoElement>(null);
   const qrLockedRef = useRef(false);
+  const scanPhaseRef = useRef<"IDLE" | "QR" | "FACE">("IDLE");
+
+  const setScanPhaseSync = (phase: "IDLE" | "QR" | "FACE") => {
+    scanPhaseRef.current = phase;
+    setScanPhase(phase);
+  };
 
   useEffect(() => {
     const token = localStorage.getItem("accessToken");
@@ -88,7 +94,7 @@ export function EmployeeScanner() {
 
   const startFrontCamera = async () => {
     try {
-      setScanPhase("FACE");
+      setScanPhaseSync("FACE");
       setTimeLeft(10);
 
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -125,7 +131,7 @@ export function EmployeeScanner() {
   const startScanning = async () => {
     setCameraError("");
     setScanning(true);
-    setScanPhase("QR");
+    setScanPhaseSync("QR");
     setQrPayload(null);
 
     try {
@@ -208,15 +214,16 @@ export function EmployeeScanner() {
     await stopScanning();
     stopFrontCamera();
     setScanning(false);
-    setScanPhase("IDLE");
+    setScanPhaseSync("IDLE");
     setQrPayload(null);
     setProcessingScan("");
     qrLockedRef.current = false;
   };
 
   const onScanSuccess = async (decodedText: string) => {
-    // If we already have a payload or aren't in QR phase, ignore
-    if (scanPhase !== "QR" || qrPayload === decodedText) return;
+    // Use ref instead of state — always has the live value
+    if (scanPhaseRef.current !== "QR" || qrLockedRef.current) return;
+    if (qrPayload === decodedText) return;
 
     setQrPayload(decodedText);
     setProcessingScan("QR Code Detected! Tap 'Proceed to Face Scan' below.");
