@@ -38,6 +38,7 @@ export function EmployeeScanner() {
   const scannerRef = useRef<HTMLDivElement>(null);
   const faceDetectorRef = useRef<FaceDetector | null>(null);
   const frontVideoRef = useRef<HTMLVideoElement>(null);
+  const qrLockedRef = useRef(false);
 
   useEffect(() => {
     const token = localStorage.getItem("accessToken");
@@ -76,7 +77,7 @@ export function EmployeeScanner() {
           modelAssetPath: "/models/blaze_face_short_range.tflite",
           delegate: "CPU",
         },
-        runningMode: "IMAGE",
+        runningMode: "VIDEO",
       });
       setIsFaceModelLoading(false);
     } catch (e) {
@@ -98,12 +99,18 @@ export function EmployeeScanner() {
         },
       });
       if (frontVideoRef.current) {
+        setProcessingScan("Starting face camera...");
         frontVideoRef.current.srcObject = stream;
+        await new Promise((resolve) => {
+          frontVideoRef.current!.onloadedmetadata = () => resolve(true);
+        });
+        await frontVideoRef.current.play();
+        setProcessingScan("");
       }
     } catch (err) {
       console.error("Front camera error:", err);
       toast.error("Could not access front camera for face detection");
-      resetScanner();
+      await resetScanner();
     }
   };
 
@@ -197,17 +204,19 @@ export function EmployeeScanner() {
     }
   };
 
-  const resetScanner = () => {
-    stopScanning();
+  const resetScanner = async () => {
+    await stopScanning();
     stopFrontCamera();
     setScanning(false);
     setScanPhase("IDLE");
     setQrPayload(null);
     setProcessingScan("");
+    qrLockedRef.current = false;
   };
 
   const onScanSuccess = async (decodedText: string) => {
-    if (processingScan || scanPhase !== "QR") return;
+    if (processingScan || qrLockedRef.current || scanPhase !== "QR") return;
+    qrLockedRef.current = true;
 
     // Stop the QR scanner as soon as we got the code
     setProcessingScan("QR Decoded! Switching camera...");
@@ -232,7 +241,7 @@ export function EmployeeScanner() {
 
       if (scanPhase === "FACE" && frontVideoElement && faceDetectorRef.current && frontVideoElement.readyState >= 2 && !processingScan) {
 
-        const results = faceDetectorRef.current.detect(frontVideoElement);
+        const results = faceDetectorRef.current.detectForVideo(frontVideoElement, performance.now());
 
         if (results.detections.length > 0) {
           // Face found!
@@ -288,16 +297,16 @@ export function EmployeeScanner() {
     };
   }, [scanPhase, processingScan]);
 
-  const finalizeClockIn = (photoData: string | null) => {
+  const finalizeClockIn = async (photoData: string | null) => {
     if (!qrPayload) {
       toast.error("QR Code data lost. Please try again.");
-      resetScanner();
+      await resetScanner();
       return;
     }
 
     if (!navigator.geolocation) {
       toast.error("Geolocation is not supported by your browser");
-      resetScanner();
+      await resetScanner();
       return;
     }
 
@@ -307,13 +316,13 @@ export function EmployeeScanner() {
       async (position) => {
         const { latitude, longitude } = position.coords;
         await clockIn(qrPayload, latitude, longitude, photoData);
-        resetScanner(); // Reset view to start after completion
+        await resetScanner(); // Reset view to start after completion
       },
-      (error) => {
+      async (error) => {
         console.error("Geolocation error:", error);
         toast.dismiss("clockin");
         toast.error("Unable to get location. Please enable location services.");
-        resetScanner();
+        await resetScanner();
       }
     );
   };
@@ -364,8 +373,8 @@ export function EmployeeScanner() {
     }
   };
 
-  const handleLogout = () => {
-    resetScanner();
+  const handleLogout = async () => {
+    await resetScanner();
     localStorage.removeItem("accessToken");
     localStorage.removeItem("userType");
     navigate("/employee/login");
