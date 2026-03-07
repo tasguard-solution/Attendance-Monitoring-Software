@@ -91,7 +91,11 @@ export function EmployeeScanner() {
       setTimeLeft(10);
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user" },
+        video: {
+          facingMode: "user",
+          width: { ideal: 640 },
+          height: { ideal: 480 }
+        },
       });
       if (frontVideoRef.current) {
         frontVideoRef.current.srcObject = stream;
@@ -181,9 +185,12 @@ export function EmployeeScanner() {
   };
 
   const stopScanning = async () => {
-    if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
+    if (html5QrCodeRef.current) {
       try {
-        await html5QrCodeRef.current.stop();
+        if (html5QrCodeRef.current.isScanning) {
+          await html5QrCodeRef.current.stop();
+        }
+        await html5QrCodeRef.current.clear(); // Important: releases camera hardware completely
       } catch (err) {
         console.error("Error stopping scanner:", err);
       }
@@ -203,9 +210,12 @@ export function EmployeeScanner() {
     if (processingScan || scanPhase !== "QR") return;
 
     // Stop the QR scanner as soon as we got the code
-    setProcessingScan("QR Decoded! Switching to face camera...");
-    await stopScanning();
+    setProcessingScan("QR Decoded! Switching camera...");
     setQrPayload(decodedText);
+    await stopScanning();
+
+    // Give browser time to release hardware
+    await new Promise(r => setTimeout(r, 400));
 
     // Switch to face scan phase
     await startFrontCamera();
@@ -246,9 +256,11 @@ export function EmployeeScanner() {
         }
       }
 
-      // Keep checking on next animation frame
+      // Keep checking but throttle to ~6 FPS to save resources
       if (scanPhase === "FACE") {
-        detectionId = requestAnimationFrame(checkFace);
+        setTimeout(() => {
+          detectionId = requestAnimationFrame(checkFace);
+        }, 150);
       }
     };
 
