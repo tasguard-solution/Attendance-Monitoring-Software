@@ -34,6 +34,7 @@ export function EmployeeScanner() {
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const scannerRef = useRef<HTMLDivElement>(null);
   const faceDetectorRef = useRef<FaceDetector | null>(null);
+  const frontVideoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     const token = localStorage.getItem("accessToken");
@@ -81,9 +82,33 @@ export function EmployeeScanner() {
     }
   };
 
+  const startFrontCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user" },
+      });
+      if (frontVideoRef.current) {
+        frontVideoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      console.error("Front camera error:", err);
+      toast.error("Could not access front camera for face detection");
+    }
+  };
+
+  const stopFrontCamera = () => {
+    if (frontVideoRef.current && frontVideoRef.current.srcObject) {
+      const stream = frontVideoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach((track) => track.stop());
+      frontVideoRef.current.srcObject = null;
+    }
+  };
+
   const startScanning = async () => {
     setCameraError("");
     setScanning(true);
+
+    await startFrontCamera();
 
     try {
       // Wait for the next tick to ensure the DOM element is rendered
@@ -138,6 +163,7 @@ export function EmployeeScanner() {
   };
 
   const stopScanning = async () => {
+    stopFrontCamera();
     if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
       try {
         await html5QrCodeRef.current.stop();
@@ -152,15 +178,15 @@ export function EmployeeScanner() {
     if (processingScan) return; // Prevent multiple scans while processing
 
     // Face detection & photo capture
-    const videoElement = document.querySelector("#qr-reader video") as HTMLVideoElement;
+    const frontVideoElement = frontVideoRef.current;
     let photoData = null;
 
-    if (videoElement && faceDetectorRef.current) {
+    if (frontVideoElement && faceDetectorRef.current && frontVideoElement.readyState >= 2) {
       setProcessingScan("Detecting face...");
-      const results = faceDetectorRef.current.detect(videoElement);
+      const results = faceDetectorRef.current.detect(frontVideoElement);
 
       if (results.detections.length === 0) {
-        toast.error("No human face detected! Please look at the camera.");
+        toast.error("No human face detected! Please look at the front camera.");
         setProcessingScan("");
         return; // Reject scan
       }
@@ -168,17 +194,20 @@ export function EmployeeScanner() {
       // Face found! Capture frame & compress
       setProcessingScan("Capturing photo...");
       const canvas = document.createElement("canvas");
-      canvas.width = videoElement.videoWidth;
-      canvas.height = videoElement.videoHeight;
+      canvas.width = frontVideoElement.videoWidth;
+      canvas.height = frontVideoElement.videoHeight;
       const ctx = canvas.getContext("2d");
 
       if (ctx) {
-        ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+        ctx.drawImage(frontVideoElement, 0, 0, canvas.width, canvas.height);
         // Compress JPEG to 70% quality
         photoData = canvas.toDataURL("image/jpeg", 0.7);
       }
     } else if (!faceDetectorRef.current) {
       toast.error("Face detection model still loading. Please wait.");
+      return;
+    } else if (frontVideoElement && frontVideoElement.readyState < 2) {
+      toast.error("Front camera is not ready yet. Please wait.");
       return;
     }
 
@@ -315,11 +344,21 @@ export function EmployeeScanner() {
                   {processingScan}
                 </div>
               )}
-              <div
-                id="qr-reader"
-                ref={scannerRef}
-                className="rounded-lg overflow-hidden"
-              ></div>
+              <div className="relative">
+                <div
+                  id="qr-reader"
+                  ref={scannerRef}
+                  className="rounded-lg overflow-hidden"
+                ></div>
+                {/* Front camera preview (PIP) */}
+                <video
+                  ref={frontVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="absolute top-4 right-4 w-28 h-36 object-cover rounded-lg border-2 border-green-500 shadow-lg z-10 bg-black/50"
+                />
+              </div>
               <div className="flex justify-center">
                 <Button
                   onClick={stopScanning}
