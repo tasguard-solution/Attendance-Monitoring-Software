@@ -3,8 +3,21 @@ import { cors } from "npm:hono/cors";
 import { logger } from "npm:hono/logger";
 import * as kv from "./kv_store.tsx";
 import { createClient } from "npm:@supabase/supabase-js";
+import { S3Client, PutObjectCommand } from "npm:@aws-sdk/client-s3";
 
 const app = new Hono();
+
+// Helper: get R2 S3 Client
+function getR2Client() {
+  return new S3Client({
+    region: "auto",
+    endpoint: Deno.env.get("R2_ENDPOINT")!,
+    credentials: {
+      accessKeyId: Deno.env.get("R2_ACCESS_KEY_ID")!,
+      secretAccessKey: Deno.env.get("R2_SECRET_ACCESS_KEY")!,
+    },
+  });
+}
 
 // Enable logger
 app.use('*', logger(console.log));
@@ -432,7 +445,7 @@ app.post("/make-server-f3cc8027/attendance/clockin", async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const { qrCode, latitude, longitude } = await c.req.json();
+    const { qrCode, latitude, longitude, photoData } = await c.req.json();
 
     if (!qrCode || latitude === undefined || longitude === undefined) {
       return c.json({ error: "Missing required fields" }, 400);
@@ -483,6 +496,34 @@ app.post("/make-server-f3cc8027/attendance/clockin", async (c) => {
       }
     }
 
+    // Upload photo to R2 if provided
+    let photoUrl = null;
+    if (photoData) {
+      try {
+        // photoData is expected to be a base64 Data URL: "data:image/jpeg;base64,/9j/4AAQSk..."
+        const base64Data = photoData.replace(/^data:image\/\w+;base64,/, "");
+        const fileExtension = photoData.substring("data:image/".length, photoData.indexOf(";base64,"));
+        const bucketName = Deno.env.get("R2_BUCKET") || "attendix-photos";
+        const fileName = `attendance/${organizationId}/${user.id}/${Date.now()}.${fileExtension}`;
+
+        const r2Client = getR2Client();
+        const command = new PutObjectCommand({
+          Bucket: bucketName,
+          Key: fileName,
+          Body: Uint8Array.from(atob(base64Data), c => c.charCodeAt(0)),
+          ContentType: `image/${fileExtension}`,
+        });
+
+        await r2Client.send(command);
+        photoUrl = fileName;
+        console.log(`Successfully uploaded photo to R2: ${fileName}`);
+      } catch (uploadError) {
+        console.error("Failed to upload photo to R2:", uploadError);
+        // We will continue the clock-in to ensure attendance isn't lost if image upload fails, 
+        // but log the error visibly.
+      }
+    }
+
     // Create attendance record
     const timestamp = new Date().toISOString();
     const attendanceRecord = {
@@ -495,6 +536,7 @@ app.post("/make-server-f3cc8027/attendance/clockin", async (c) => {
       timestamp,
       latitude,
       longitude,
+      photoUrl,
     };
 
     await kv.set(`attendance:${user.id}:${timestamp}`, attendanceRecord);

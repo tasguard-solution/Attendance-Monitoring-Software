@@ -15,6 +15,7 @@ import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { Html5Qrcode } from "html5-qrcode";
 import { format } from "date-fns";
 import { supabase } from "../lib/supabase";
+import { FaceDetector, FilesetResolver } from "@mediapipe/tasks-vision";
 
 interface ClockInRecord {
   timestamp: string;
@@ -28,8 +29,11 @@ export function EmployeeScanner() {
   const [cameraError, setCameraError] = useState("");
   const [lastClockIn, setLastClockIn] = useState<ClockInRecord | null>(null);
   const [userName, setUserName] = useState("");
+  const [isFaceModelLoading, setIsFaceModelLoading] = useState(true);
+  const [processingScan, setProcessingScan] = useState("");
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const scannerRef = useRef<HTMLDivElement>(null);
+  const faceDetectorRef = useRef<FaceDetector | null>(null);
 
   useEffect(() => {
     const token = localStorage.getItem("accessToken");
@@ -39,6 +43,7 @@ export function EmployeeScanner() {
     }
 
     fetchUserInfo();
+    loadFaceDetector();
 
     return () => {
       stopScanning();
@@ -54,6 +59,25 @@ export function EmployeeScanner() {
       }
     } catch (error) {
       console.error("Error fetching user info:", error);
+    }
+  };
+
+  const loadFaceDetector = async () => {
+    try {
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+      );
+      faceDetectorRef.current = await FaceDetector.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: "/models/blaze_face_short_range.tflite",
+          delegate: "CPU",
+        },
+        runningMode: "IMAGE",
+      });
+      setIsFaceModelLoading(false);
+    } catch (e) {
+      console.error("Failed to load face detector:", e);
+      toast.error("Failed to initialize Face Detection");
     }
   };
 
@@ -125,9 +149,42 @@ export function EmployeeScanner() {
   };
 
   const onScanSuccess = async (decodedText: string) => {
-    console.log("QR Code scanned:", decodedText);
+    if (processingScan) return; // Prevent multiple scans while processing
 
-    // Stop scanning immediately
+    // Face detection & photo capture
+    const videoElement = document.querySelector("#qr-reader video") as HTMLVideoElement;
+    let photoData = null;
+
+    if (videoElement && faceDetectorRef.current) {
+      setProcessingScan("Detecting face...");
+      const results = faceDetectorRef.current.detect(videoElement);
+
+      if (results.detections.length === 0) {
+        toast.error("No human face detected! Please look at the camera.");
+        setProcessingScan("");
+        return; // Reject scan
+      }
+
+      // Face found! Capture frame & compress
+      setProcessingScan("Capturing photo...");
+      const canvas = document.createElement("canvas");
+      canvas.width = videoElement.videoWidth;
+      canvas.height = videoElement.videoHeight;
+      const ctx = canvas.getContext("2d");
+
+      if (ctx) {
+        ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+        // Compress JPEG to 70% quality
+        photoData = canvas.toDataURL("image/jpeg", 0.7);
+      }
+    } else if (!faceDetectorRef.current) {
+      toast.error("Face detection model still loading. Please wait.");
+      return;
+    }
+
+    setProcessingScan("");
+
+    // Stop scanning immediately upon successful capture
     await stopScanning();
 
     // Get GPS location
@@ -139,7 +196,7 @@ export function EmployeeScanner() {
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const { latitude, longitude } = position.coords;
-        await clockIn(decodedText, latitude, longitude);
+        await clockIn(decodedText, latitude, longitude, photoData);
       },
       (error) => {
         console.error("Geolocation error:", error);
@@ -152,10 +209,11 @@ export function EmployeeScanner() {
     // This is called frequently during scanning, so we don't log it
   };
 
-  const clockIn = async (qrCode: string, latitude: number, longitude: number) => {
+  const clockIn = async (qrCode: string, latitude: number, longitude: number, photoData: string | null) => {
     const token = localStorage.getItem("accessToken");
 
     try {
+      toast.loading("Recording attendance...", { id: "clockin" });
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-f3cc8027/attendance/clockin`,
         {
@@ -169,6 +227,7 @@ export function EmployeeScanner() {
             qrCode,
             latitude,
             longitude,
+            photoData,
           }),
         }
       );
@@ -185,10 +244,10 @@ export function EmployeeScanner() {
         longitude,
       });
 
-      toast.success("Successfully clocked in!");
+      toast.success("Successfully clocked in!", { id: "clockin" });
     } catch (error: any) {
       console.error("Clock in error:", error);
-      toast.error(error.message || "Clock in failed");
+      toast.error(error.message || "Clock in failed", { id: "clockin" });
     }
   };
 
@@ -240,16 +299,22 @@ export function EmployeeScanner() {
               <Button
                 onClick={startScanning}
                 size="lg"
+                disabled={isFaceModelLoading}
                 className="bg-green-600 hover:bg-green-700 flex items-center gap-2"
               >
                 <Camera className="w-5 h-5" />
-                Start Scanning
+                {isFaceModelLoading ? "Loading AI..." : "Start Scanning"}
               </Button>
             </div>
           )}
 
           {scanning && (
             <div className="space-y-4">
+              {processingScan && (
+                <div className="text-center p-3 bg-blue-50 text-blue-700 rounded-md font-medium border border-blue-200">
+                  {processingScan}
+                </div>
+              )}
               <div
                 id="qr-reader"
                 ref={scannerRef}
@@ -325,13 +390,19 @@ export function EmployeeScanner() {
             <li className="flex gap-2">
               <span className="font-semibold">3.</span>
               <span>
-                Allow location access when prompted to verify your presence
+                Ensure your face is clearly visible to the camera
               </span>
             </li>
             <li className="flex gap-2">
               <span className="font-semibold">4.</span>
               <span>
-                Your attendance will be recorded with timestamp and location
+                Allow location access when prompted to verify your presence
+              </span>
+            </li>
+            <li className="flex gap-2">
+              <span className="font-semibold">5.</span>
+              <span>
+                Your attendance and face secure capture will be recorded
               </span>
             </li>
           </ol>

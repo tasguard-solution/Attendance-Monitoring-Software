@@ -1,0 +1,18 @@
+# Tasguard Feature Roadmap
+
+## 1. Client Side (Employees)
+- [ ] Implement simultaneous face camera snap on QR code scan.
+- [ ] Add photo compressor functionality for captured images.
+- [/] Set up and integrate Cloudflare R2 for photo storage.
+- [ ] Implement device locking (e.g., using FingerprintJS) to restrict accounts per device.
+- [ ] Implement face presence detection (liveness/face-in-frame, without identity recognition).
+
+## 2. Management Side
+- [ ] Implement staff user info editing and deletion.
+- [ ] Create branch data view for checking clock-in/out times per branch.
+- [ ] Create branch comparison view to analyze clocking times across branches.
+
+## 3. Administration Side
+- [ ] Implement editing for staff and organization info.
+- [ ] Implement manual Supabase password resets for accounts.
+- [ ] Implement individual deletion for staff and organizations.
