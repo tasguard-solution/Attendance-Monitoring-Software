@@ -15,6 +15,7 @@ import {
   Building2,
   Pencil,
   Trash2,
+  KeyRound,
 } from "lucide-react";
 import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import QRCode from "qrcode";
@@ -77,6 +78,10 @@ export function OrgDashboard() {
   const [editEmployeeEmail, setEditEmployeeEmail] = useState("");
   const [isSavingEmployee, setIsSavingEmployee] = useState(false);
   const [isDeletingEmployee, setIsDeletingEmployee] = useState(false);
+  const [showResetPasswordDialog, setShowResetPasswordDialog] = useState(false);
+  const [resetPasswordEmployee, setResetPasswordEmployee] = useState<any | null>(null);
+  const [newEmployeePassword, setNewEmployeePassword] = useState("");
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
 
   // Branch filter for attendance log ("" = all branches)
   const [attendanceBranchFilter, setAttendanceBranchFilter] = useState<string>("");
@@ -312,6 +317,49 @@ export function OrgDashboard() {
       if (error && error.message) {
         console.error("Fetch employees error:", error.message);
       }
+    }
+  };
+
+  const openResetPassword = (emp: any) => {
+    setResetPasswordEmployee(emp);
+    setNewEmployeePassword("");
+    setShowResetPasswordDialog(true);
+  };
+
+  const handleResetPassword = async () => {
+    if (!resetPasswordEmployee || !newEmployeePassword) return;
+    if (newEmployeePassword.length < 6) {
+      toast.error("Password must be at least 6 characters");
+      return;
+    }
+    setIsResettingPassword(true);
+    const token = localStorage.getItem("accessToken");
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-f3cc8027/org/employees/${resetPasswordEmployee.id}/reset-password`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${publicAnonKey}`,
+            "X-Authorization": `Bearer ${token}`,
+          },
+          body: JSON.stringify({ password: newEmployeePassword }),
+        }
+      );
+
+      if (response.ok) {
+        toast.success(`Password reset for ${resetPasswordEmployee.name}`);
+        setShowResetPasswordDialog(false);
+      } else {
+        const data = await response.json();
+        toast.error(data.error || "Failed to reset password");
+      }
+    } catch (error) {
+      console.error("Error resetting password:", error);
+      toast.error("Failed to reset password");
+    } finally {
+      setIsResettingPassword(false);
     }
   };
 
@@ -666,8 +714,18 @@ export function OrgDashboard() {
                             size="sm"
                             onClick={() => openEditEmployee(emp)}
                             className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                            title="Edit Profile"
                           >
                             <Pencil className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openResetPassword(emp)}
+                            className="text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                            title="Reset Password"
+                          >
+                            <KeyRound className="w-4 h-4" />
                           </Button>
                           <Button
                             variant="ghost"
@@ -951,6 +1009,43 @@ export function OrgDashboard() {
               disabled={!editEmployeeName || isSavingEmployee}
             >
               {isSavingEmployee ? "Saving..." : "Update Profile"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset Password Dialog */}
+      <Dialog open={showResetPasswordDialog} onOpenChange={setShowResetPasswordDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reset Employee Password</DialogTitle>
+            <DialogDescription>
+              Set a new temporary password for {resetPasswordEmployee?.name}.
+              The employee will be able to log in with this new password immediately.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">New Password</label>
+              <input
+                type="text"
+                className="w-full p-2 border rounded-md focus:ring-2 focus:ring-indigo-500 outline-none"
+                placeholder="At least 6 characters"
+                value={newEmployeePassword}
+                onChange={(e) => setNewEmployeePassword(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 mt-4">
+            <Button variant="outline" onClick={() => setShowResetPasswordDialog(false)} disabled={isResettingPassword}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleResetPassword}
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+              disabled={!newEmployeePassword || isResettingPassword}
+            >
+              {isResettingPassword ? "Resetting..." : "Reset Password"}
             </Button>
           </div>
         </DialogContent>

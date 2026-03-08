@@ -67,17 +67,6 @@ app.get("/make-server-f3cc8027/health", (c) => {
   return c.json({ status: "ok" });
 });
 
-// JSON 404 Handler
-app.notFound((c) => {
-  console.log(`[404] ${c.req.method} ${c.req.path}`);
-  return c.json({ 
-    error: "Route not found", 
-    method: c.req.method, 
-    path: c.req.path,
-    url: c.req.url
-  }, 404);
-});
-
 // JSON Error Handler
 app.onError((err, c) => {
   console.error(`[500] ${err.message}`, err);
@@ -382,6 +371,30 @@ app.delete("/make-server-f3cc8027/admin/employees/:id", async (c) => {
     return c.json({ success: true });
   } catch (err) {
     return c.json({ error: "Failed to delete employee" }, 500);
+  }
+});
+
+// Admin Manual Password Reset
+app.post("/make-server-f3cc8027/admin/users/:id/reset-password", async (c) => {
+  if (!await verifyAdmin(c)) return c.json({ error: "Unauthorized" }, 401);
+  try {
+    const targetId = c.req.param('id');
+    const { password } = await c.req.json();
+    if (!password) return c.json({ error: "Password is required" }, 400);
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    const { error } = await supabase.auth.admin.updateUserById(targetId, {
+      password: password
+    });
+
+    if (error) return c.json({ error: error.message }, 400);
+    return c.json({ success: true });
+  } catch (err) {
+    return c.json({ error: "Failed to reset password" }, 500);
   }
 });
 
@@ -838,72 +851,77 @@ app.get("/make-server-f3cc8027/org/employees", async (c) => {
 // UPDATE EMPLOYEE
 // ============================================================
 app.put("/make-server-f3cc8027/org/employees/:id", async (c) => {
-  const targetId = c.req.param('id');
-  console.log(`[DEBUG] PUT /employees/${targetId} - START`);
-  
   try {
     const { user, error, supabase } = await getAuthUser(c);
     if (!user?.id || error) {
-      console.log(`[DEBUG] Unauthorized: ${error?.message || 'No user ID'}`);
-      return c.json({ error: 'Unauthorized', details: error?.message }, 401);
+      return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    console.log(`[DEBUG] Authenticated as org: ${user.id}`);
-
+    const targetId = c.req.param('id');
     const empData = await kv.get(`employee:${targetId}`);
-    if (!empData) {
-      console.log(`[DEBUG] Employee ${targetId} NOT FOUND in KV`);
-      return c.json({ error: `Employee ${targetId} not found` }, 404);
+
+    if (!empData || empData.organizationId !== user.id) {
+      return c.json({ error: 'Employee not found' }, 404);
     }
 
-    if (empData.organizationId !== user.id) {
-      console.log(`[DEBUG] Org mismatch: emp.org=${empData.organizationId}, user.org=${user.id}`);
-      return c.json({ error: 'Employee belongs to another organization' }, 404);
-    }
-
-    let body;
-    try {
-      body = await c.req.json();
-    } catch (e) {
-      console.log(`[DEBUG] Failed to parse request body: ${e}`);
-      return c.json({ error: 'Invalid JSON body' }, 400);
-    }
-
-    const { name, email } = body;
-    console.log(`[DEBUG] Updating to: name=${name}, email=${email}`);
+    const { name, email } = await c.req.json();
 
     if (name) empData.name = name;
     if (email) empData.email = email;
 
     // Update KV
     await kv.set(`employee:${targetId}`, empData);
-    console.log(`[DEBUG] KV updated for ${targetId}`);
 
     // Update Auth Metadata if name changed
     if (name) {
-      console.log(`[DEBUG] Fetching user ${targetId} for metadata merge`);
       const { data: { user: targetUser }, error: getError } = await supabase.auth.admin.getUserById(targetId);
       
       if (!getError && targetUser) {
         const updatedMetadata = { ...targetUser.user_metadata, name };
-        console.log(`[DEBUG] Merging metadata for ${targetId}`);
         await supabase.auth.admin.updateUserById(targetId, {
           user_metadata: updatedMetadata
         });
       } else {
-        console.log(`[DEBUG] Metadata merge skipped: ${getError?.message}`);
         await supabase.auth.admin.updateUserById(targetId, {
           user_metadata: { name } 
         });
       }
     }
 
-    console.log(`[DEBUG] PUT /employees/${targetId} - SUCCESS`);
     return c.json({ success: true, employee: empData });
-  } catch (err: any) {
-    console.log(`[DEBUG] UNCAUGHT ERROR: ${err.message}`);
-    console.log(err.stack);
-    return c.json({ error: "Internal Server Error", message: err.message }, 500);
+  } catch (err) {
+    console.log(`Update employee error: ${err}`);
+    return c.json({ error: "Failed to update employee" }, 500);
+  }
+});
+
+// Organization Manual Password Reset for Employees
+app.post("/make-server-f3cc8027/org/employees/:id/reset-password", async (c) => {
+  try {
+    const { user, error, supabase } = await getAuthUser(c);
+    if (!user?.id || error) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const targetId = c.req.param('id');
+    const empData = await kv.get(`employee:${targetId}`);
+
+    if (!empData || empData.organizationId !== user.id) {
+      return c.json({ error: 'Employee not found' }, 404);
+    }
+
+    const { password } = await c.req.json();
+    if (!password) return c.json({ error: "Password is required" }, 400);
+
+    const { error: resetError } = await supabase.auth.admin.updateUserById(targetId, {
+      password: password
+    });
+
+    if (resetError) return c.json({ error: resetError.message }, 400);
+    return c.json({ success: true });
+  } catch (err) {
+    console.log(`Reset password error: ${err}`);
+    return c.json({ error: "Failed to reset password" }, 500);
   }
 });
 

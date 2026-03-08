@@ -15,6 +15,7 @@ import {
     Search,
     Pencil,
     Eye,
+    KeyRound,
 } from "lucide-react";
 import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
@@ -70,6 +71,12 @@ export function AdminDashboard() {
     const [inspectOrg, setInspectOrg] = useState<Organization | null>(null);
     const [inspectEmployees, setInspectEmployees] = useState<Employee[]>([]);
     const [inspectLoading, setInspectLoading] = useState(false);
+
+    // Password Reset
+    const [showResetPasswordDialog, setShowResetPasswordDialog] = useState(false);
+    const [resetPasswordTarget, setResetPasswordTarget] = useState<{ id: string, name: string } | null>(null);
+    const [newResetPassword, setNewResetPassword] = useState("");
+    const [isResettingPassword, setIsResettingPassword] = useState(false);
 
     useEffect(() => {
         const adminToken = localStorage.getItem("adminToken");
@@ -312,6 +319,45 @@ export function AdminDashboard() {
         }
     };
 
+    const openResetPassword = (id: string, name: string) => {
+        setResetPasswordTarget({ id, name });
+        setNewResetPassword("");
+        setShowResetPasswordDialog(true);
+    };
+
+    const handleResetPassword = async () => {
+        if (!resetPasswordTarget || !newResetPassword) return;
+        if (newResetPassword.length < 6) {
+            toast.error("Password must be at least 6 characters");
+            return;
+        }
+
+        setIsResettingPassword(true);
+        const adminToken = localStorage.getItem("adminToken");
+        try {
+            const response = await fetch(
+                `https://${projectId}.supabase.co/functions/v1/make-server-f3cc8027/admin/users/${resetPasswordTarget.id}/reset-password`,
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${publicAnonKey}`,
+                        "X-Authorization": `Bearer ${adminToken}`,
+                    },
+                    body: JSON.stringify({ password: newResetPassword }),
+                }
+            );
+
+            if (!response.ok) throw new Error("Password reset failed");
+            toast.success(`Password for ${resetPasswordTarget.name} has been updated`);
+            setShowResetPasswordDialog(false);
+        } catch (error: any) {
+            toast.error(error.message);
+        } finally {
+            setIsResettingPassword(false);
+        }
+    };
+
     const handleLogout = () => {
         localStorage.removeItem("adminToken");
         localStorage.removeItem("userType");
@@ -476,8 +522,18 @@ export function AdminDashboard() {
                                                                 size="sm"
                                                                 onClick={() => openEditOrg(org)}
                                                                 className="text-blue-400 hover:text-blue-300 hover:bg-blue-400/10"
+                                                                title="Edit name/email"
                                                             >
                                                                 <Pencil className="w-4 h-4" />
+                                                            </Button>
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                onClick={() => openResetPassword(org.id, org.name)}
+                                                                className="text-amber-400 hover:text-amber-300 hover:bg-amber-400/10"
+                                                                title="Reset Password"
+                                                            >
+                                                                <KeyRound className="w-4 h-4" />
                                                             </Button>
                                                             <Button
                                                                 variant="ghost"
@@ -547,8 +603,18 @@ export function AdminDashboard() {
                                                                 size="sm"
                                                                 onClick={() => openEditEmployee(emp)}
                                                                 className="text-blue-400 hover:text-blue-300 hover:bg-blue-400/10"
+                                                                title="Edit Profile"
                                                             >
                                                                 <Pencil className="w-4 h-4" />
+                                                            </Button>
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                onClick={() => openResetPassword(emp.id, emp.name)}
+                                                                className="text-amber-400 hover:text-amber-300 hover:bg-amber-400/10"
+                                                                title="Reset Password"
+                                                            >
+                                                                <KeyRound className="w-4 h-4" />
                                                             </Button>
                                                             <Button
                                                                 variant="ghost"
@@ -751,8 +817,18 @@ export function AdminDashboard() {
                                                 size="sm"
                                                 onClick={() => openEditEmployee(emp)}
                                                 className="text-blue-400 hover:bg-blue-400/10 h-8"
+                                                title="Edit Profile"
                                             >
                                                 <Pencil className="w-3 h-3" />
+                                            </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => openResetPassword(emp.id, emp.name)}
+                                                className="text-amber-400 hover:bg-amber-400/10 h-8"
+                                                title="Reset Password"
+                                            >
+                                                <KeyRound className="w-3 h-3" />
                                             </Button>
                                             <Button
                                                 variant="ghost"
@@ -767,6 +843,43 @@ export function AdminDashboard() {
                                 ))}
                             </div>
                         )}
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* Password Reset Dialog */}
+            <Dialog open={showResetPasswordDialog} onOpenChange={setShowResetPasswordDialog}>
+                <DialogContent className="sm:max-w-md bg-[#1e293b] border-[#334155] text-slate-200">
+                    <DialogHeader>
+                        <DialogTitle className="text-white">Manual Password Override</DialogTitle>
+                        <DialogDescription className="text-slate-400">
+                            Setting a new password for <span className="text-amber-400 font-bold">{resetPasswordTarget?.name}</span>.
+                            This will take effect immediately.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">New Credentials</label>
+                            <input
+                                type="text"
+                                value={newResetPassword}
+                                onChange={(e) => setNewResetPassword(e.target.value)}
+                                placeholder="Min. 6 alphanumeric"
+                                className="w-full rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2 text-white focus:ring-1 focus:ring-amber-500 outline-none"
+                            />
+                        </div>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                        <Button variant="outline" onClick={() => setShowResetPasswordDialog(false)} className="border-[#334155]">
+                            Cancel
+                        </Button>
+                        <Button
+                            onClick={handleResetPassword}
+                            disabled={isResettingPassword || !newResetPassword}
+                            className="bg-amber-600 hover:bg-amber-700 text-white"
+                        >
+                            {isResettingPassword ? "Executing Reset..." : "Force Update"}
+                        </Button>
                     </div>
                 </DialogContent>
             </Dialog>
